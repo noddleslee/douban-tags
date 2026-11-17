@@ -1,0 +1,99 @@
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f4f7f3;
+  --line: #e4e9e2;
+  --text: #24302a;
+  --text-2: #5f6d64;
+  --text-3: #93a097;
+  --accent: #2f7a4f;
+  --accent-soft: #e2f1e6;
+  --accent-text: #1f5c39;
+  --book: #d9e6dc;
+  --movie: #dfe3ee;
+  --star: #e8a33d;
+  --danger: #b4432f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1f1c;
+    --bg-soft: #242a26;
+    --line: #333b35;
+    --text: #e6ece7;
+    --text-2: #aab6ad;
+    --text-3: #7c8a80;
+    --accent: #6cc08f;
+    --accent-soft: #23402f;
+    --accent-text: #a5e0bc;
+    --book: #2c3a30;
+    --movie: #2d3240;
+    --danger: #ef8a76;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input { font: inherit; color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* 面板外壳 */
+.dt-shell { max-width: 640px; margin: 0 auto; padding: 0 14px 24px; }
+.dt-top { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 10px;
+  border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.dt-top h1 { font-size: 17px; font-weight: 600; margin: 0; }
+.dt-link-btn { background: none; border: 0; color: var(--text-2); font-size: 13px; padding: 4px 6px; border-radius: 6px; }
+.dt-link-btn:hover { background: var(--bg-soft); }
+.dt-card { background: var(--bg-soft); border-radius: 10px; padding: 12px 14px; margin: 0 0 12px; font-size: 13px; color: var(--text-2); }
+.dt-card strong { color: var(--text); }
+.dt-card p { margin: 0 0 8px; }
+.dt-card .dt-err { color: var(--danger); }
+.dt-primary { background: var(--accent); color: #fff; border: 0; border-radius: 999px; padding: 6px 16px; font-size: 13px; }
+.dt-secondary { background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 5px 14px; font-size: 13px; }
+.dt-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dt-uid { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: var(--bg); margin: 4px 0 8px; }
+.dt-bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin: 6px 0 8px; }
+.dt-bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.dt-foot { margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3);
+  display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; }
+
+/* 筛选界面 */
+.dt-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.dt-tab { background: none; border: 0; padding: 6px 0 8px; color: var(--text-2); font-size: 15px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.dt-tab.on { color: var(--accent-text); font-weight: 600; border-bottom-color: var(--accent); }
+.dt-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.dt-pill { border: 0; background: var(--bg-soft); color: var(--text-2); border-radius: 999px; padding: 4px 14px; font-size: 13px; }
+.dt-pill.on { background: var(--accent); color: #fff; }
+.dt-search { width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 7px 10px; margin-bottom: 10px; }
+.dt-selected { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.dt-clear { background: none; border: 0; color: var(--text-3); font-size: 12px; }
+.dt-facet { border-bottom: 1px solid var(--line); padding: 8px 0; }
+.dt-facet summary { cursor: pointer; font-weight: 600; font-size: 13px; list-style: none; display: flex; align-items: center; gap: 6px; }
+.dt-facet summary::-webkit-details-marker { display: none; }
+.dt-facet summary::before { content: "▸"; color: var(--text-3); font-size: 11px; }
+.dt-facet[open] summary::before { content: "▾"; }
+.dt-badge { background: var(--accent); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; font-weight: 500; }
+.dt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dt-chip { border: 0; background: var(--bg-soft); color: var(--text-2); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; }
+.dt-chip:hover { background: var(--accent-soft); }
+.dt-chip.on { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; box-shadow: inset 0 0 0 1px var(--accent); }
+.dt-n { color: var(--text-3); margin-left: 4px; font-size: 11px; font-weight: 400; }
+.dt-more { border: 0; background: none; color: var(--accent); font-size: 12px; padding: 3px 4px; }
+.dt-people-q { width: 100%; margin-top: 8px; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 5px 9px; font-size: 12.5px; }
+.dt-head { font-weight: 600; font-size: 13px; margin: 14px 0 8px; }
+.dt-list { display: flex; flex-direction: column; gap: 8px; }
+.dt-row { display: flex; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.dt-cover { flex: 0 0 40px; height: 56px; border-radius: 4px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  font-size: 16px; color: var(--text-2); }
+.dt-cover-book { background: var(--book); }
+.dt-cover-movie { background: var(--movie); }
+.dt-cover img { width: 100%; height: 100%; object-fit: cover; }
+.dt-info { min-width: 0; flex: 1; }
+.dt-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-sub { color: var(--text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dt-meta { font-size: 12px; color: var(--text-3); display: flex; gap: 8px; align-items: center; margin-top: 2px; }
+.dt-st { color: var(--accent-text); }
+.dt-stars { color: var(--star); letter-spacing: 1px; }
+.dt-showmore { width: 100%; margin-top: 10px; background: var(--bg-soft); border: 0; border-radius: 8px; padding: 8px; color: var(--text-2); }
+.dt-muted { color: var(--text-3); font-size: 12.5px; }
+.dt-empty { padding: 20px 0; color: var(--text-2); }
