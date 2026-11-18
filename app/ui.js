@@ -228,7 +228,16 @@
       saveUiState(opts.persist, st);
     }, true);
 
+    // 中文输入法组字期间（拼音还没选字）不能重绘，否则输入框被替换、组字中断
+    let composing = false;
+    root.addEventListener('compositionstart', () => { composing = true; });
+    root.addEventListener('compositionend', (e) => {
+      composing = false;
+      e.target.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
     root.addEventListener('input', (e) => {
+      if (composing || e.isComposing) return;
       const t = e.target;
       if (t.classList.contains('dt-search')) {
         st.query = t.value; st.shown = PAGE;
