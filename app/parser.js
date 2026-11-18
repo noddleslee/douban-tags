@@ -33,16 +33,19 @@ const SHORT_COUNTRY = {
   奥: '奥地利', 波: '波兰', 捷: '捷克', 匈: '匈牙利', 希: '希腊', 印: '印度', 以: '以色列',
   瑞典: '瑞典', 瑞士: '瑞士', 丹: '丹麦', 挪: '挪威', 芬: '芬兰', 比: '比利时', 爱: '爱尔兰',
   巴: '巴西', 阿: '阿根廷', 墨: '墨西哥', 智: '智利', 土: '土耳其', 伊: '伊朗', 埃: '埃及',
-  新: '新西兰', 苏: '苏联', 清: '中国', 明: '中国', 宋: '中国', 唐: '中国', 汉: '中国',
+  新: '新西兰', 苏: '苏联', 白俄: '白俄罗斯', 清: '中国', 明: '中国', 宋: '中国', 唐: '中国', 汉: '中国',
   台: '中国台湾', 港: '中国香港', 中: '中国',
 };
 
 const REGION_ALIAS = { 香港: '中国香港', 台湾: '中国台湾', 澳门: '中国澳门' };
 
-const DATE_RE = /^\d{4}(-\d{1,2}){0,2}(\s*\(.*\))?$/;
-const DURATION_RE = /^\d+\s*分钟/;
-const URL_RE = /^(https?:|www\.)|\.(com|org|net|cn|jp|kr|tv|co|io)(\/|$)/i;
-const LANG_RE = /(语|话|对白)$/;
+// 日期可能带地区或具体时间：2024-09-06(中国大陆)、2024-09-06 19:50
+const DATE_RE = /^\d{4}(-\d{1,2}){0,2}(\s+\d{1,2}:\d{2})?(\s*\(.*\))?$/;
+// 时长可能带地区前缀：Greece: 185 分钟、10分钟（单集）
+const DURATION_RE = /^([^\s:：]+[:：]\s*)?\d+\s*分钟/;
+// 官网地址：www.xxx、http://xxx、1917.movie、xxx.com/a/b
+const URL_RE = /^(https?:|www\.)|^[\w-]+(\.[\w-]+)*\.[a-z]{2,10}(\/\S*)?$/i;
+const LANG_RE = /(语|话|对白|方言)$/;
 const CJK_RE = /[㐀-鿿]/;
 
 export function splitParts(text) {
@@ -62,6 +65,11 @@ export function normPerson(name) {
   let n = String(name || '').replace(/\s+/g, ' ').trim();
   if (CJK_RE.test(n)) n = n.replace(/\s+[A-Za-z].*$/, '');
   return n;
+}
+
+// "波兰语 Polski"、"波兰语（Polski）" → "波兰语"
+function normLang(s) {
+  return String(s).replace(/\s*[（(][^)）]*[)）]\s*$/, '').replace(/\s+[A-Za-z].*$/, '').trim();
 }
 
 function yearOf(s) {
@@ -111,7 +119,7 @@ export function parseMovieIntro(intro) {
   // 时长之后：片名… / 类型… / 编剧… / 语言…
   let k = durIdx >= 0 ? durIdx : (c1 >= 0 ? c1 : i);
   if (durIdx >= 0) {
-    r.durationMin = parseInt(p[durIdx], 10);
+    r.durationMin = Number(p[durIdx].match(/(\d+)\s*分钟/)[1]);
     while (k < p.length && DURATION_RE.test(p[k])) k++;
   }
   let g0 = -1;
@@ -121,8 +129,8 @@ export function parseMovieIntro(intro) {
 
   let langStart = p.length;
   const tailFloor = g1 >= 0 ? g1 : k;
-  while (langStart - 1 >= tailFloor && LANG_RE.test(p[langStart - 1])) langStart--;
-  r.languages = p.slice(langStart);
+  while (langStart - 1 >= tailFloor && LANG_RE.test(normLang(p[langStart - 1]))) langStart--;
+  r.languages = p.slice(langStart).map(normLang);
   if (g1 >= 0) r.writers = p.slice(g1, langStart);
 
   if (!r.cast.length && c0 < 0) r.cast = p.slice(i, durIdx >= 0 ? durIdx : (g0 >= 0 ? g0 : langStart));
@@ -130,16 +138,20 @@ export function parseMovieIntro(intro) {
   r.year = years.length ? Math.min(...years) : (yearOf(p.find((s) => DATE_RE.test(s)) || '') || null);
   r.countries = uniq(r.countries.map(normCountry));
   r.cast = uniq(r.cast.filter((s) => !URL_RE.test(s)).map(normPerson));
-  r.directors = uniq(r.directors.map(normPerson));
+  // 有的剧在时长前面重复写了一遍片名，不能当成导演
+  const titles = new Set(durIdx >= 0 ? p.slice(k, g0 >= 0 ? g0 : k) : []);
+  r.directors = uniq(r.directors.filter((s) => !titles.has(s)).map(normPerson));
   r.writers = uniq(r.writers.map(normPerson));
   r.languages = uniq(r.languages);
   r.genres = uniq(r.genres);
   return r;
 }
 
-const PRICE_RE = /^((USD|GBP|EUR|JPY|CNY|HKD|TWD|NT\$|HK\$|\$|£|€|¥)\s*)?\d+(\.\d+)?\s*(元|円|圆)?$/i;
-const BOOK_DATE_RE = /^\d{4}(-\d{1,2}){0,2}$|^\d{4}年/;
-const NAT_RE = /^\s*[[［【(（]\s*([^\]］】)）]{1,8})\s*[\]］】)）]\s*/;
+// 价格：58.00、128.00 元、GBP 18.95、新台幣 130元、132.00（全三册）
+const PRICE_RE = /^[^\d\s]{0,6}\s*\d+(\.\d+)?\s*(元|円|圆|港币|台币)?\s*([（(][^)）]*[)）])?$/i;
+// 出版日期：2017-4、2008.10、2004/07、2010年5月
+const BOOK_DATE_RE = /^\d{4}([-./](0?[1-9]|1[0-2])([-./]\d{1,2})?)?$|^\d{4}年/;
+const NAT_RE = /^\s*[[［【(（〔]\s*([^\]］】)）〕]{1,8})\s*[\]］】)）〕]\s*/;
 
 function splitNames(s) {
   return String(s || '').split(/[、,，;；&]|\s+和\s+/).map((x) => x.trim()).filter(Boolean);

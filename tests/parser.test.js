@@ -120,6 +120,48 @@ test('书：作者名里的英文括号被去掉', () => {
   assert.deepEqual(r.countries, ['英国']);
 });
 
+test('电影：时长前重复片名、导演后带具体时间、方言', () => {
+  const r = parseMovieIntro('2016-10-17(意大利) / 理查德·麦登 / 达斯汀·霍夫曼 / 英国 / 意大利 / 法国 / 塞尔吉奥·米米卡-戈赞 / 美第奇家族：翡冷翠名门 / 60分钟 / 美第奇家族：翡冷翠名门 / 剧情 / 历史 / 尼古拉斯·梅耶 Nicholas Meyer / 英语');
+  assert.deepEqual(r.directors, ['塞尔吉奥·米米卡-戈赞']);
+  const r2 = parseMovieIntro('2024-09-15(中国大陆) / 咏梅 / 姜武 / 中国大陆 / 尹丽川 / 2024-09-06 19:50 / 106分钟 / 剧情 / 家庭 / 尹丽川 Lichuan Yin / 汉语普通话 / 河南方言 / 四川方言');
+  assert.deepEqual(r2.directors, ['尹丽川']);
+  assert.deepEqual(r2.languages, ['汉语普通话', '河南方言', '四川方言']);
+  assert.deepEqual(r2.writers, ['尹丽川']);
+});
+
+test('电影：带地区前缀的时长、带外文的语言', () => {
+  const r = parseMovieIntro('2004-02-12 / 亚历山德拉·艾迪尼 / George Houliaras / 希腊 / 法国 / 西奥·安哲罗普洛斯 / Greece: 185 分钟 / 170分钟 / 162分钟(DVD) / 哭泣的草原 / 剧情 / 历史 / 西奥·安哲罗普洛斯 Theodoros Angelopoulos / 希腊语');
+  assert.deepEqual(r.directors, ['西奥·安哲罗普洛斯']);
+  assert.equal(r.durationMin, 185);
+  assert.deepEqual(r.genres, ['剧情', '历史']);
+  assert.deepEqual(parseMovieIntro('2021-12-21(波兰) / 阿德里安娜 / 波兰 / 10分钟（单集） / 安检 / 爱情 / 短片 / Natasza Parzymies / 波兰语 Polski').languages, ['波兰语']);
+  assert.deepEqual(parseMovieIntro('2021-12-21(波兰) / 阿德里安娜 / 波兰 / 8分钟 / 安检 / 爱情 / 波兰语（Polski）').languages, ['波兰语']);
+});
+
+test('电影：少见后缀的官网地址不算导演', () => {
+  const r = parseMovieIntro('2019-12-25(美国) / 乔治·麦凯 / 英国 / 美国 / 1917.movie / 萨姆·门德斯 / 119分钟 / 1917 / 剧情 / 战争 / 英语');
+  assert.deepEqual(r.directors, ['萨姆·门德斯']);
+});
+
+test('书：台币价格、点号和斜杠日期、六角括号国籍', () => {
+  const r = parseBookPub('平庫ワカ / 杜信彰 / 東立 / 2023-4 / 新台幣 130元');
+  assert.equal(r.publisher, '東立');
+  assert.equal(r.year, 2023);
+  const r2 = parseBookPub('〔法〕费尔南·布罗代尔、Fernand Braudel / 刘北成、周立红 / 北京大学出版社 / 2008.10 / 28.00元');
+  assert.equal(r2.publisher, '北京大学出版社');
+  assert.equal(r2.year, 2008);
+  assert.deepEqual(r2.countries, ['法国']);
+  const r3 = parseBookPub('胡少安 / 香港天地图书有限公司 / 2004/07');
+  assert.equal(r3.publisher, '香港天地图书有限公司');
+  assert.equal(r3.year, 2004);
+  assert.deepEqual(parseBookPub('[白俄] S.A.阿列克谢耶维奇 / 吕宁思 / 九州出版社 / 2014-6 / 32.00元').countries, ['白俄罗斯']);
+  assert.equal(parseBookPub('某作者 / 某出版社 / 2010-1 / 1999.00').year, 2010);
+  const r4 = parseBookPub('[英] 肯·福莱特 / 陈杰 / 江苏凤凰文艺出版社 / 2017-3 / 132.00（全三册）');
+  assert.equal(r4.publisher, '江苏凤凰文艺出版社');
+  assert.equal(r4.year, 2017);
+  assert.equal(parseBookPub('冯小刚 / 长江文艺出版社 / 2013-9 / 35.00元（有2013年10月4印本）').publisher, '长江文艺出版社');
+});
+
 test('工具函数', () => {
   assert.deepEqual(parseMyTags('标签: 韩国 人性'), ['韩国', '人性']);
   assert.deepEqual(parseMyTags(''), []);
