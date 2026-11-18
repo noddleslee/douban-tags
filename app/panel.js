@@ -21,7 +21,8 @@ let busy = false; // 正在读取豆瓣或查询作者
 let foreground = false; // 第一次读取：用大卡片显示进度
 let stopRequested = false;
 let lastError = null;
-let bgText = '';
+let bgText = ''; // 读取豆瓣的进度
+let authorText = ''; // 查询作者归属的进度
 let detectedUid = null;
 
 function fmtTime(ts) {
@@ -38,11 +39,11 @@ function progressText(info) {
   return `正在读取${LIST_NAME[lk] || ''}${pos}`;
 }
 
-// 用作者文化归属修正书籍的国家，然后刷新列表
+// 刷新列表。作者文化归属只在显示时套用、不写回存储，避免和后台读取豆瓣同时写数据、互相覆盖
 async function refreshList() {
   const items = await loadItems();
   const authors = await loadAuthors();
-  if (applyAuthorRegions(items, authors)) await saveItems(items);
+  applyAuthorRegions(items, authors);
   const list = Object.values(items);
   if (!ui) ui = window.DoubanTagsUI.mount($('root'), list, { persist: true, emptyHtml: '' });
   else ui.update(list);
@@ -98,8 +99,9 @@ async function renderFoot() {
   const meta = await loadMeta();
   const count = Object.keys(await loadItems()).length;
   if (!count) { $('foot').innerHTML = ''; return; }
+  const lines = [bgText, authorText].filter(Boolean).map(esc).join('<br>');
   const state = busy
-    ? `${esc(bgText || '后台同步中…')} <button class="dt-link-btn" id="stop-bg">暂停</button>`
+    ? `${lines || '后台同步中…'} <button class="dt-link-btn" id="stop-bg">暂停</button>`
     : lastError
       ? `<span class="dt-err">后台同步暂停：${esc(lastError)}</span>`
       : `共 ${count} 条 · 已同步 ${esc(fmtTime(meta.lastSync) || '—')}`;
@@ -137,7 +139,7 @@ async function lookupAuthors() {
   const todo = authorsToLookup(items, cache);
   for (let i = 0; i < todo.length; i++) {
     if (stopRequested) break;
-    bgText = `正在查询作者的文化归属（${i + 1} / ${todo.length}）`;
+    authorText = `正在查询作者的文化归属（${i + 1} / ${todo.length}）`;
     renderFoot();
     const { name, titles } = todo[i];
     try {
@@ -150,12 +152,15 @@ async function lookupAuthors() {
     await new Promise((r) => setTimeout(r, 300));
   }
   await saveAuthors(cache);
+  authorText = '';
 }
 
-// 后台任务：依次执行 steps，最后查作者归属。只在底部显示一行进度。
+// 后台任务：读取豆瓣（依次执行 steps）和查询作者归属同时进行，互不等待。只在底部显示进度。
 async function background(steps, uid) {
   if (busy) return;
   busy = true; foreground = false; stopRequested = false; lastError = null;
+  // 作者查询访问的是维基百科，和读取豆瓣互不影响，所以一开始就并行做
+  const authorsTask = lookupAuthors().catch((e) => console.warn('[douban-tags] 查询作者出错', e));
   try {
     for (const step of steps) {
       if (stopRequested) break;
@@ -166,13 +171,20 @@ async function background(steps, uid) {
         steps.push({ mode: 'full', lists: r.needFull });
       }
     }
+    bgText = '';
+    await authorsTask;
+    // 这次同步新读到的书，作者还没查过的，补查一次
     if (!stopRequested) await lookupAuthors();
   } catch (e) {
     lastError = e.message || String(e);
     console.error('[douban-tags]', e);
+    bgText = '';
+    renderFoot();
+    await authorsTask; // 读取豆瓣出错时，作者查询照常做完
   } finally {
     busy = false;
     bgText = '';
+    authorText = '';
     await saveMeta({ parserVersion: PARSER_VERSION });
     await refreshList();
     await renderStatus();
