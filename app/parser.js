@@ -2,7 +2,7 @@
 // 纯字符串函数，不依赖浏览器，可以在 node 里测试。
 
 // 解析规则有改动时加 1，插件会用已存的原始简介自动重新解析
-export const PARSER_VERSION = 3;
+export const PARSER_VERSION = 4;
 
 export const GENRES = new Set([
   '剧情', '喜剧', '动作', '爱情', '科幻', '动画', '悬疑', '惊悚', '恐怖', '犯罪',
@@ -177,7 +177,8 @@ function cleanBookPerson(name) {
 // 书籍出版信息格式：作者 / [译者] / 出版社 / 出版日期 / [价格]
 export function parseBookPub(pub) {
   const p = splitParts(pub);
-  const r = { year: null, authors: [], translators: [], publisher: null, countries: [] };
+  // countryGuess：国家是推断出来的（没有国籍标注），之后会用维基百科查作者的文化归属来修正
+  const r = { year: null, authors: [], translators: [], publisher: null, countries: [], countryGuess: false };
   if (!p.length) return r;
 
   if (p.length > 1 && !BOOK_DATE_RE.test(p[p.length - 1]) && PRICE_RE.test(p[p.length - 1])) p.pop();
@@ -204,6 +205,7 @@ export function parseBookPub(pub) {
       && r.authors.every((a) => CJK_RE.test(a) && !/[·•・.]/.test(a) && !KANA_RE.test(a))
       && !KANA_RE.test(r.publisher || '')) {
     r.countries.push('中国大陆');
+    r.countryGuess = true;
   }
   r.countries = uniq(r.countries);
   return r;

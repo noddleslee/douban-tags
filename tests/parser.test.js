@@ -164,6 +164,8 @@ test('书：台币价格、点号和斜杠日期、六角括号国籍', () => {
 
 test('书：没标国籍的中国作者推断为中国大陆', () => {
   assert.deepEqual(parseBookPub('余华 / 作家出版社 / 2012-8 / 20.00元').countries, ['中国大陆']);
+  assert.equal(parseBookPub('余华 / 作家出版社 / 2012-8 / 20.00元').countryGuess, true);
+  assert.equal(parseBookPub('[美] 哈珀·李 / 李育超 / 译林出版社 / 2017-2 / 58.00').countryGuess, false);
   assert.deepEqual(parseBookPub('李霖灿 / 中信出版社 / 2018-7 / 88.00元').countries, ['中国大陆']);
   assert.deepEqual(parseBookPub('（清）曹雪芹 / 人民文学出版社 / 2008-7').countries, ['中国大陆']);
   assert.deepEqual(parseMovieIntro('1987-01-01 / 演员甲 / 中国 / 导演乙 / 90分钟 / 某片 / 剧情 / 汉语普通话').countries, ['中国大陆']);

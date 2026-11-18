@@ -71,18 +71,26 @@ export function parseUidInput(input) {
   return /^[A-Za-z0-9_.-]+$/.test(s) ? s : null;
 }
 
+const countLocal = (items, l) => Object.values(items).filter((it) => it.type === l.type && it.status === l.status).length;
+
 // mode: 'full' 全量（会清理已取消标记的条目）；'update' 只读每个清单最新的几页
-export async function runSync({ uid, mode = 'full', onProgress = () => {}, shouldStop = () => false }) {
+// lists: 只处理哪几个清单（LISTS 的下标），默认全部
+// 返回 needFull：更新时发现总数对不上（说明豆瓣上删除过条目）的清单下标，需要对它们做一次全量重读
+export async function runSync({ uid, mode = 'full', lists = null, onProgress = () => {}, shouldStop = () => false }) {
+  const order = lists && lists.length ? [...lists] : LISTS.map((_, i) => i);
+  const sig = order.join(',');
   let meta = await loadMeta();
-  let progress = meta.progress && meta.progress.uid === uid && meta.progress.mode === mode
+  let progress = meta.progress && meta.progress.uid === uid && meta.progress.mode === mode && (meta.progress.sig || '0,1,2,3,4,5') === sig
     ? meta.progress
-    : { uid, mode, listIdx: 0, start: 0, seen: {}, pages: 0, startedAt: Date.now() };
+    : { uid, mode, sig, listIdx: 0, start: 0, seen: {}, pages: 0, needFull: [], startedAt: Date.now() };
+  progress.needFull = progress.needFull || [];
 
   const items = await loadItems();
   const totals = meta.totals || {};
+  const gaps = meta.gaps || {};
 
-  for (; progress.listIdx < LISTS.length; progress.listIdx++, progress.start = 0) {
-    const l = LISTS[progress.listIdx];
+  for (; progress.listIdx < order.length; progress.listIdx++, progress.start = 0) {
+    const l = LISTS[order[progress.listIdx]];
     const lk = listKey(l);
     const seen = new Set(progress.seen[lk] || []);
     let listDone = false;
@@ -127,9 +135,18 @@ export async function runSync({ uid, mode = 'full', onProgress = () => {}, shoul
           if (it.type === l.type && it.status === l.status && !seen.has(k)) delete items[k];
         }
         await saveItems(items);
+        // 豆瓣显示的总数可能比实际能读到的多（下架的条目），记下差值，之后对比时扣掉
+        gaps[lk] = Math.max(0, (totals[lk] != null ? totals[lk] : seen.size) - seen.size);
+        await saveMeta({ gaps });
+      }
+      if (listDone && mode === 'update' && totals[lk] != null) {
+        const diff = totals[lk] - countLocal(items, l);
+        if (diff !== (gaps[lk] || 0) && !progress.needFull.includes(order[progress.listIdx])) {
+          progress.needFull.push(order[progress.listIdx]);
+        }
       }
 
-      const isLastRequest = listDone && progress.listIdx === LISTS.length - 1;
+      const isLastRequest = listDone && progress.listIdx === order.length - 1;
       if (!isLastRequest) {
         const cooldown = progress.pages % COOLDOWN_EVERY === 0;
         const wait = cooldown ? COOLDOWN_MS : DELAY_MIN + Math.random() * (DELAY_MAX - DELAY_MIN);
@@ -139,6 +156,8 @@ export async function runSync({ uid, mode = 'full', onProgress = () => {}, shoul
     }
   }
 
-  await saveMeta({ progress: null, totals, lastSync: Date.now(), uid });
-  return { stopped: false, count: Object.keys(items).length };
+  const done = { progress: null, totals, gaps, lastSync: Date.now(), uid };
+  if (mode === 'full' && order.length === LISTS.length) done.lastFull = Date.now();
+  await saveMeta(done);
+  return { stopped: false, count: Object.keys(items).length, needFull: progress.needFull };
 }

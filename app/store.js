@@ -23,5 +23,17 @@ export async function saveMeta(patch) {
 }
 
 export async function clearAll() {
-  await chrome.storage.local.remove([ITEMS, META]);
+  await chrome.storage.local.remove([ITEMS, META, 'dt_authors']);
+}
+
+// 作者文化归属的查询结果：{ 作者名: { region, qid, reason, at } }
+const AUTHORS = 'dt_authors';
+
+export async function loadAuthors() {
+  const r = await chrome.storage.local.get(AUTHORS);
+  return r[AUTHORS] || {};
+}
+
+export async function saveAuthors(map) {
+  await chrome.storage.local.set({ [AUTHORS]: map });
 }

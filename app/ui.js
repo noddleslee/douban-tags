@@ -249,9 +249,21 @@
       }
     });
 
+    // 后台同步刷新数据时，如果你正在输入框里打字，等离开输入框后再重绘
+    let pendingRender = false;
+    const typing = () => composing || (document.activeElement && root.contains(document.activeElement)
+      && document.activeElement.tagName === 'INPUT');
+    root.addEventListener('focusout', () => {
+      setTimeout(() => { if (pendingRender && !typing()) { pendingRender = false; render(); } }, 0);
+    });
+
     render();
     return {
-      update(next) { st.items = next || []; render(); },
+      update(next) {
+        st.items = next || [];
+        if (typing()) { pendingRender = true; return; }
+        render();
+      },
     };
   }
 
