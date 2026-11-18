@@ -2,7 +2,7 @@
 // 纯字符串函数，不依赖浏览器，可以在 node 里测试。
 
 // 解析规则有改动时加 1，插件会用已存的原始简介自动重新解析
-export const PARSER_VERSION = 2;
+export const PARSER_VERSION = 3;
 
 export const GENRES = new Set([
   '剧情', '喜剧', '动作', '爱情', '科幻', '动画', '悬疑', '惊悚', '恐怖', '犯罪',
@@ -36,11 +36,12 @@ const SHORT_COUNTRY = {
   奥: '奥地利', 波: '波兰', 捷: '捷克', 匈: '匈牙利', 希: '希腊', 印: '印度', 以: '以色列',
   瑞典: '瑞典', 瑞士: '瑞士', 丹: '丹麦', 挪: '挪威', 芬: '芬兰', 比: '比利时', 爱: '爱尔兰',
   巴: '巴西', 阿: '阿根廷', 墨: '墨西哥', 智: '智利', 土: '土耳其', 伊: '伊朗', 埃: '埃及',
-  新: '新西兰', 苏: '苏联', 白俄: '白俄罗斯', 清: '中国', 明: '中国', 宋: '中国', 唐: '中国', 汉: '中国',
-  台: '中国台湾', 港: '中国香港', 中: '中国',
+  新: '新西兰', 苏: '苏联', 白俄: '白俄罗斯', 清: '中国大陆', 明: '中国大陆', 宋: '中国大陆', 唐: '中国大陆', 汉: '中国大陆',
+  台: '中国台湾', 港: '中国香港', 中: '中国大陆',
 };
 
-const REGION_ALIAS = { 香港: '中国香港', 台湾: '中国台湾', 澳门: '中国澳门' };
+// 统一写法，让书和电影的国家标签能合在一起筛选
+const REGION_ALIAS = { 中国: '中国大陆', 香港: '中国香港', 台湾: '中国台湾', 澳门: '中国澳门' };
 
 // 日期可能带地区或具体时间：2024-09-06(中国大陆)、2024-09-06 19:50
 const DATE_RE = /^\d{4}(-\d{1,2}){0,2}(\s+\d{1,2}:\d{2})?(\s*\(.*\))?$/;
@@ -197,12 +198,12 @@ export function parseBookPub(pub) {
   }
   r.authors = uniq(authorRaw.map(cleanBookPerson));
   r.translators = uniq(p.slice(1).flatMap(splitNames).map(cleanBookPerson));
-  // 中国作者在豆瓣上一般不标国籍。没有国籍标注、没有译者、作者都是不带"·"的中文名时，判定为中国。
+  // 中国作者在豆瓣上一般不标国籍。没有国籍标注、没有译者、作者都是不带"·"的中文名时，判定为中国大陆（港台作者会被一并归入，属已知取舍）。
   // 外国作品的中译本会有译者；音译的外国名字通常带"·"；日文原版书带假名。
   if (!r.countries.length && !r.translators.length && r.authors.length
       && r.authors.every((a) => CJK_RE.test(a) && !/[·•・.]/.test(a) && !KANA_RE.test(a))
       && !KANA_RE.test(r.publisher || '')) {
-    r.countries.push('中国');
+    r.countries.push('中国大陆');
   }
   r.countries = uniq(r.countries);
   return r;

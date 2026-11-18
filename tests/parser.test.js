@@ -162,9 +162,11 @@ test('书：台币价格、点号和斜杠日期、六角括号国籍', () => {
   assert.equal(parseBookPub('冯小刚 / 长江文艺出版社 / 2013-9 / 35.00元（有2013年10月4印本）').publisher, '长江文艺出版社');
 });
 
-test('书：没标国籍的中国作者推断为中国', () => {
-  assert.deepEqual(parseBookPub('余华 / 作家出版社 / 2012-8 / 20.00元').countries, ['中国']);
-  assert.deepEqual(parseBookPub('李霖灿 / 中信出版社 / 2018-7 / 88.00元').countries, ['中国']);
+test('书：没标国籍的中国作者推断为中国大陆', () => {
+  assert.deepEqual(parseBookPub('余华 / 作家出版社 / 2012-8 / 20.00元').countries, ['中国大陆']);
+  assert.deepEqual(parseBookPub('李霖灿 / 中信出版社 / 2018-7 / 88.00元').countries, ['中国大陆']);
+  assert.deepEqual(parseBookPub('（清）曹雪芹 / 人民文学出版社 / 2008-7').countries, ['中国大陆']);
+  assert.deepEqual(parseMovieIntro('1987-01-01 / 演员甲 / 中国 / 导演乙 / 90分钟 / 某片 / 剧情 / 汉语普通话').countries, ['中国大陆']);
   assert.deepEqual(parseBookPub('东野圭吾 / 李盈春 / 南海出版公司 / 2014-5 / 39.50元').countries, []);
   assert.deepEqual(parseBookPub('约翰·斯坦贝克 / 上海译文出版社 / 2018-3').countries, []);
   assert.deepEqual(parseBookPub('平庫ワカ / 東立 / 2023-4').countries, []);

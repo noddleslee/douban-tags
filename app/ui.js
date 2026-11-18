@@ -18,13 +18,13 @@
   const FACETS = {
     myTags: { label: '我的标签', get: (i) => i.myTags },
     genres: { label: '类型', get: (i) => i.genres },
-    countries: { label: '国家 / 地区', get: (i) => i.countries },
-    languages: { label: '语言', get: (i) => i.languages },
+    countries: { label: '国家 / 地区', get: (i) => i.countries, limit: 20, search: true },
+    languages: { label: '语言', get: (i) => i.languages, limit: 20, search: true },
     decade: { label: '年代', get: (i) => (i.decade ? [i.decade] : []), sort: 'name' },
     cast: { label: '演员', get: (i) => i.cast, people: true },
     directors: { label: '导演', get: (i) => i.directors, people: true },
     authors: { label: '作者', get: (i) => i.authors, people: true },
-    publisher: { label: '出版社', get: (i) => (i.publisher ? [i.publisher] : []) },
+    publisher: { label: '出版社', get: (i) => (i.publisher ? [i.publisher] : []), search: true },
     rating: { label: '我的评分', get: (i) => (i.rating ? [`${i.rating} 星`] : []), sort: 'name' },
     duration: { label: '时长', get: (i) => durationBucket(i.durationMin), sort: 'name' },
   };
@@ -119,11 +119,15 @@
         body = `<div class="dt-chips">${top.map(([v, n]) => chip(fk, v, n)).join('') || '<span class="dt-muted">没有匹配的人</span>'}</div>`
           + `<input class="dt-people-q" data-fk="${esc(fk)}" placeholder="搜索${esc(f.label)}" value="${esc(st.peopleQuery[fk] || '')}">`;
       } else {
-        const all = st.expanded.has(fk);
-        const vis = all ? entries : entries.slice(0, CHIP_LIMIT);
+        const limit = f.limit || CHIP_LIMIT;
+        const q = f.search ? (st.peopleQuery[fk] || '').trim().toLowerCase() : '';
+        const pool = q ? entries.filter(([v]) => String(v).toLowerCase().includes(q)) : entries;
+        const all = st.expanded.has(fk) || !!q;
+        const vis = all ? pool.slice() : pool.slice(0, limit);
         for (const v of selected) if (!vis.some((e) => e[0] === v)) vis.push(entries.find((e) => e[0] === v));
-        body = `<div class="dt-chips">${vis.map(([v, n]) => chip(fk, v, n)).join('')}`
-          + `${entries.length > CHIP_LIMIT ? `<button class="dt-more" data-fk="${esc(fk)}">${all ? '收起' : `更多（${entries.length}）`}</button>` : ''}</div>`;
+        body = `<div class="dt-chips">${vis.map(([v, n]) => chip(fk, v, n)).join('') || '<span class="dt-muted">没有匹配的标签</span>'}`
+          + `${!q && entries.length > limit ? `<button class="dt-more" data-fk="${esc(fk)}">${all ? '收起' : `更多（${entries.length}）`}</button>` : ''}</div>`
+          + (f.search && entries.length > limit ? `<input class="dt-people-q" data-fk="${esc(fk)}" placeholder="搜索${esc(f.label.replace(/\s*\/.*$/, ''))}" value="${esc(st.peopleQuery[fk] || '')}">` : '');
       }
       const open = st.open.has(fk) || selected.length > 0;
       return `<details class="dt-facet" data-fk="${esc(fk)}"${open ? ' open' : ''}>`
