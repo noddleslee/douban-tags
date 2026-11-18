@@ -162,6 +162,29 @@ test('书：台币价格、点号和斜杠日期、六角括号国籍', () => {
   assert.equal(parseBookPub('冯小刚 / 长江文艺出版社 / 2013-9 / 35.00元（有2013年10月4印本）').publisher, '长江文艺出版社');
 });
 
+test('书：没标国籍的中国作者推断为中国', () => {
+  assert.deepEqual(parseBookPub('余华 / 作家出版社 / 2012-8 / 20.00元').countries, ['中国']);
+  assert.deepEqual(parseBookPub('李霖灿 / 中信出版社 / 2018-7 / 88.00元').countries, ['中国']);
+  assert.deepEqual(parseBookPub('东野圭吾 / 李盈春 / 南海出版公司 / 2014-5 / 39.50元').countries, []);
+  assert.deepEqual(parseBookPub('约翰·斯坦贝克 / 上海译文出版社 / 2018-3').countries, []);
+  assert.deepEqual(parseBookPub('平庫ワカ / 東立 / 2023-4').countries, []);
+  assert.deepEqual(parseBookPub('Julian Bell / Thames & Hudson / 2010-3 / GBP 18.95').countries, []);
+  assert.deepEqual(parseBookPub('[美] 哈珀·李 / 李育超 / 译林出版社 / 2017-2 / 58.00').countries, ['美国']);
+});
+
+test('书：只有两项时第二项是译者、名字后面的国籍', () => {
+  const r = parseBookPub('信田佐代子 / 黄琳雅');
+  assert.equal(r.publisher, null);
+  assert.deepEqual(r.translators, ['黄琳雅']);
+  assert.deepEqual(r.countries, []);
+  const r2 = parseBookPub('[英]莫琳·拉芬斯珀格（Maureen Raffensperger） / 人民邮电出版社');
+  assert.equal(r2.publisher, '人民邮电出版社');
+  const r3 = parseBookPub('安妮.爱德华兹（美） / 张三 / 某出版社 / 2010-1');
+  assert.deepEqual(r3.countries, ['美国']);
+  assert.deepEqual(r3.authors, ['安妮.爱德华兹']);
+  assert.deepEqual(parseBookPub('Reginald Fleming Johnston（庄士敦） / 秦仲龢（高伯雨） / 李敖出版社 / 1988-4').countries, []);
+});
+
 test('工具函数', () => {
   assert.deepEqual(parseMyTags('标签: 韩国 人性'), ['韩国', '人性']);
   assert.deepEqual(parseMyTags(''), []);

@@ -63,6 +63,13 @@ function parseBookItem(el, status) {
   });
 }
 
+// 用已存的原始简介重新拆标签（解析规则更新后用，不需要重新访问豆瓣）
+export function reparseItem(it) {
+  if (!it || !it.raw) return it;
+  const info = it.type === 'movie' ? parseMovieIntro(it.raw) : parseBookPub(it.raw);
+  return { ...it, ...info, decade: decadeOf(info.year) };
+}
+
 export function parseListPage(html, type, status) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const nodes = type === 'movie'

@@ -1,5 +1,7 @@
 // 侧边栏面板：读取记录、显示进度。
-import { loadItems, loadMeta, saveMeta, clearAll } from './store.js';
+import { loadItems, saveItems, loadMeta, saveMeta, clearAll } from './store.js';
+import { reparseItem } from './listpage.js';
+import { PARSER_VERSION } from './parser.js';
 import { runSync, detectUid, parseUidInput, LISTS } from './sync.js';
 
 const $ = (id) => document.getElementById(id);
@@ -124,6 +126,7 @@ async function startSync(uid, mode) {
     console.error('[douban-tags]', e);
   } finally {
     syncing = false;
+    await saveMeta({ parserVersion: PARSER_VERSION });
     await refreshList();
     await renderStatus();
     await renderFoot();
@@ -132,7 +135,18 @@ async function startSync(uid, mode) {
 
 $('close').onclick = () => window.close();
 
+// 解析规则更新后，用已存的原始简介重新拆一遍
+async function reparseIfNeeded() {
+  const meta = await loadMeta();
+  if (meta.parserVersion === PARSER_VERSION) return;
+  const items = await loadItems();
+  for (const k of Object.keys(items)) items[k] = reparseItem(items[k]);
+  await saveItems(items);
+  await saveMeta({ parserVersion: PARSER_VERSION });
+}
+
 (async function init() {
+  await reparseIfNeeded();
   const meta = await loadMeta();
   if (!meta.uid) detectedUid = await detectUid();
   await refreshList();

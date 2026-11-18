@@ -1,6 +1,9 @@
 // 解析豆瓣列表页里的简介文字，拆成可筛选的字段。
 // 纯字符串函数，不依赖浏览器，可以在 node 里测试。
 
+// 解析规则有改动时加 1，插件会用已存的原始简介自动重新解析
+export const PARSER_VERSION = 2;
+
 export const GENRES = new Set([
   '剧情', '喜剧', '动作', '爱情', '科幻', '动画', '悬疑', '惊悚', '恐怖', '犯罪',
   '同性', '音乐', '歌舞', '传记', '历史', '战争', '西部', '奇幻', '冒险', '灾难',
@@ -46,7 +49,8 @@ const DURATION_RE = /^([^\s:：]+[:：]\s*)?\d+\s*分钟/;
 // 官网地址：www.xxx、http://xxx、1917.movie、xxx.com/a/b
 const URL_RE = /^(https?:|www\.)|^[\w-]+(\.[\w-]+)*\.[a-z]{2,10}(\/\S*)?$/i;
 const LANG_RE = /(语|话|对白|方言)$/;
-const CJK_RE = /[㐀-鿿]/;
+const CJK_RE = /[\u3400-\u9fff]/;
+const KANA_RE = /[\u3040-\u30ff]/;
 
 export function splitParts(text) {
   return String(text || '')
@@ -151,6 +155,9 @@ export function parseMovieIntro(intro) {
 const PRICE_RE = /^[^\d\s]{0,6}\s*\d+(\.\d+)?\s*(元|円|圆|港币|台币)?\s*([（(][^)）]*[)）])?$/i;
 // 出版日期：2017-4、2008.10、2004/07、2010年5月
 const BOOK_DATE_RE = /^\d{4}([-./](0?[1-9]|1[0-2])([-./]\d{1,2})?)?$|^\d{4}年/;
+const PUBLISHER_RE = /出版|书店|書店|书局|書局|社|公司|文化|图书|圖書|馆|館|press|publish|books|media|house|inc|ltd/i;
+// 名字后面的国籍：安妮.爱德华兹（美）
+const NAT_SUFFIX_RE = /\s*[（(]\s*([\u4e00-\u9fff]{1,4})\s*[)）]\s*$/;
 const NAT_RE = /^\s*[[［【(（〔]\s*([^\]］】)）〕]{1,8})\s*[\]］】)）〕]\s*/;
 
 function splitNames(s) {
@@ -174,7 +181,8 @@ export function parseBookPub(pub) {
 
   if (p.length > 1 && !BOOK_DATE_RE.test(p[p.length - 1]) && PRICE_RE.test(p[p.length - 1])) p.pop();
   if (p.length && BOOK_DATE_RE.test(p[p.length - 1])) r.year = yearOf(p.pop());
-  if (p.length >= 2) r.publisher = p.pop();
+  // 没有出版日期时，最后一项不一定是出版社（如"信田佐代子 / 黄琳雅"，第二项是译者）
+  if (p.length >= 2 && (r.year || PUBLISHER_RE.test(p[p.length - 1]))) r.publisher = p.pop();
 
   const authorRaw = splitNames(p[0] || '');
   for (const a of authorRaw) {
@@ -182,10 +190,20 @@ export function parseBookPub(pub) {
     if (m) {
       const nat = m[1].trim();
       r.countries.push(normCountry(SHORT_COUNTRY[nat] || nat));
+      continue;
     }
+    const ms = a.match(NAT_SUFFIX_RE);
+    if (ms && (SHORT_COUNTRY[ms[1]] || COUNTRIES.has(ms[1]))) r.countries.push(normCountry(SHORT_COUNTRY[ms[1]] || ms[1]));
   }
   r.authors = uniq(authorRaw.map(cleanBookPerson));
   r.translators = uniq(p.slice(1).flatMap(splitNames).map(cleanBookPerson));
+  // 中国作者在豆瓣上一般不标国籍。没有国籍标注、没有译者、作者都是不带"·"的中文名时，判定为中国。
+  // 外国作品的中译本会有译者；音译的外国名字通常带"·"；日文原版书带假名。
+  if (!r.countries.length && !r.translators.length && r.authors.length
+      && r.authors.every((a) => CJK_RE.test(a) && !/[·•・.]/.test(a) && !KANA_RE.test(a))
+      && !KANA_RE.test(r.publisher || '')) {
+    r.countries.push('中国');
+  }
   r.countries = uniq(r.countries);
   return r;
 }
