@@ -17,6 +17,8 @@
   // 每个筛选维度：从条目里取值的方法
   const FACETS = {
     topics: { label: '题材', get: (i) => i.topics || [], limit: 40 },
+    // 二级题材，值写成"一级/二级"；不单独成组，选中一级后在"题材"里展开
+    subtopics: { label: '细分', get: (i) => i.subtopics || [] },
     myTags: { label: '我的标签', get: (i) => i.myTags },
     genres: { label: '类型', get: (i) => i.genres },
     countries: { label: '国家 / 地区', get: (i) => i.countries, limit: 20, search: true },
@@ -39,6 +41,11 @@
   const CHIP_LIMIT = 12;
   const PEOPLE_TOP = 10;
   const PAGE = 50;
+
+  const SUB_SEP = '/';
+  const OTHER_SUB = '其他';
+  const subName = (v) => String(v).split(SUB_SEP).slice(1).join(SUB_SEP);
+  const subParent = (v) => String(v).split(SUB_SEP)[0];
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -85,11 +92,27 @@
     // exceptFk：计算某个分组自己的候选标签时，不受这个分组已选标签的限制
     function selFilter(i, exceptFk) {
       for (const [fk, vals] of st.sel) {
-        if (fk === exceptFk) continue;
+        if (fk === exceptFk || fk === 'subtopics' || (fk === 'topics' && exceptFk === 'subtopics')) continue;
+        if (fk === 'topics') { if (!topicPass(i)) return false; continue; }
         const have = FACETS[fk].get(i) || [];
         if (![...vals].some((v) => have.includes(v))) return false;
       }
+      if (!st.sel.has('topics') && st.sel.has('subtopics') && exceptFk !== 'topics' && exceptFk !== 'subtopics') return topicPass(i);
       return true;
+    }
+
+    // 题材：选中的一级之间任意一个即可；某个一级下选了二级，这个一级只算选中的二级
+    function topicPass(i) {
+      const T = [...(st.sel.get('topics') || [])];
+      const S = [...(st.sel.get('subtopics') || [])];
+      const have = i.topics || [];
+      const haveSub = i.subtopics || [];
+      const parents = T.length ? T : [...new Set(S.map(subParent))];
+      return parents.some((t) => {
+        if (!have.includes(t)) return false;
+        const mine = S.filter((s) => subParent(s) === t);
+        return !mine.length || mine.some((s) => haveSub.includes(s));
+      });
     }
 
     const facetList = (base, fk) => base.filter((i) => selFilter(i, fk));
@@ -105,9 +128,10 @@
 
     const isSel = (fk, v) => !!(st.sel.get(fk) && st.sel.get(fk).has(v));
 
-    function chip(fk, v, n) {
+    function chip(fk, v, n, label) {
       const on = isSel(fk, v);
-      return `<button class="dt-chip${on ? ' on' : ''}" data-fk="${esc(fk)}" data-v="${esc(v)}">${esc(v)}`
+      const text = label != null ? label : fk === 'subtopics' ? String(v).replace(SUB_SEP, '·') : v;
+      return `<button class="dt-chip${on ? ' on' : ''}" data-fk="${esc(fk)}" data-v="${esc(v)}">${esc(text)}`
         + `${n != null ? `<span class="dt-n">${n}</span>` : ''}</button>`;
     }
 
@@ -143,21 +167,53 @@
         chipsHtml = vis.map(([v, n]) => chip(fk, v, n)).join('')
           + (entries.length > limit ? `<button class="dt-more" data-fk="${esc(fk)}">${all ? '收起' : `更多（${entries.length}）`}</button>` : '');
       }
-      const body = `<div class="dt-chips">${chipsHtml}</div>${hint}`
+      if (fk === 'topics') chipsHtml = `<div class="dt-chips">${chipsHtml}</div>` + subRowsHtml(list);
+      else chipsHtml = `<div class="dt-chips">${chipsHtml}</div>`;
+      const body = `${chipsHtml}${hint}`
         + (searchable ? `<input class="dt-people-q" data-fk="${esc(fk)}" placeholder="搜索${esc(label)}，按回车" enterkeyhint="search">` : '');
-      const open = st.open.has(fk) || selected.length > 0;
+      const nSel = selected.length + (fk === 'topics' ? (st.sel.get('subtopics') || new Set()).size : 0);
+      const open = st.open.has(fk) || nSel > 0;
       return `<details class="dt-facet" data-fk="${esc(fk)}"${open ? ' open' : ''}>`
-        + `<summary>${esc(f.label)}${selected.length ? `<span class="dt-badge">${selected.length}</span>` : ''}</summary>${body}</details>`;
+        + `<summary>${esc(f.label)}${nSel ? `<span class="dt-badge">${nSel}</span>` : ''}</summary>${body}</details>`;
+    }
+
+    // 选中的一级题材如果有二级，在下面展开一行二级（"其他"排最后）
+    function subRowsHtml(list) {
+      const rows = [];
+      for (const t of st.sel.get('topics') || []) {
+        const m = new Map();
+        for (const i of list) {
+          if (!(i.topics || []).includes(t)) continue;
+          for (const s of i.subtopics || []) if (subParent(s) === t) m.set(s, (m.get(s) || 0) + 1);
+        }
+        for (const s of st.sel.get('subtopics') || []) if (subParent(s) === t && !m.has(s)) m.set(s, 0);
+        if (!m.size) continue;
+        const arr = [...m.entries()].sort((a, b) => (subName(a[0]) === OTHER_SUB) - (subName(b[0]) === OTHER_SUB)
+          || b[1] - a[1] || subName(a[0]).localeCompare(subName(b[0]), 'zh'));
+        rows.push(`<div class="dt-subrow"><span class="dt-sublabel">${esc(t)} ›</span>`
+          + arr.map(([s, n]) => chip('subtopics', s, n, subName(s))).join('') + '</div>');
+      }
+      return rows.join('');
     }
 
     function statusText(i) {
       return STATUS_LABEL[i.type][i.status] || '';
     }
 
+    // 列表里显示的题材：有具体二级的显示二级（如"推理悬疑"），否则显示一级
+    function topicWords(i) {
+      const out = [];
+      for (const t of i.topics || []) {
+        const subs = (i.subtopics || []).filter((s) => subParent(s) === t && subName(s) !== OTHER_SUB).map(subName);
+        out.push(...(subs.length ? subs : [t]));
+      }
+      return out;
+    }
+
     function rowHtml(i) {
       const sub = i.type === 'movie'
         ? [i.year, (i.countries || []).slice(0, 2).join(' '), (i.genres || []).slice(0, 3).join(' ')]
-        : [(i.authors || []).slice(0, 2).join('、'), i.year, (i.topics || []).slice(0, 2).join(' ')];
+        : [(i.authors || []).slice(0, 2).join('、'), i.year, topicWords(i).slice(0, 2).join(' ')];
       const stars = i.rating ? `<span class="dt-stars">${'★'.repeat(i.rating)}</span>` : '';
       const initial = esc(String(i.title || '?').slice(0, 1));
       const cover = i.cover
@@ -233,6 +289,12 @@
         if (!set.has(v)) delete st.facetQuery[fk]; // 从搜索结果里选中后，收起搜索
         set.has(v) ? set.delete(v) : set.add(v);
         set.size ? st.sel.set(fk, set) : st.sel.delete(fk);
+        // 取消一级题材时，连同它下面选中的二级一起取消
+        if (fk === 'topics' && !set.has(v) && st.sel.has('subtopics')) {
+          const subs = st.sel.get('subtopics');
+          for (const s of [...subs]) if (subParent(s) === v) subs.delete(s);
+          if (!subs.size) st.sel.delete('subtopics');
+        }
         st.shown = PAGE;
       } else if (t.classList.contains('dt-more')) {
         const fk = t.dataset.fk;
