@@ -85,18 +85,58 @@ export function isObscure(detail) {
   return (detail.votes || 0) < OBSCURE.minVotes || (detail.tags || []).length < OBSCURE.minTags;
 }
 
-// 显示时套用：给书籍加上 topics（一级题材，含"冷门书"）、subtopics（二级）和 dtags（清洗后的豆瓣标签）
-export function applyDetails(items, details) {
+// 同一部书的上下册、第一二部：书名去掉卷次后相同、第一作者相同，就算一组
+const VOLUME_RE = /[\s:：·,，]*[（(\[【]?\s*(上|中|下|上册|中册|下册|上卷|下卷|全集|[一二三四五六七八九十]+|\d+|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]+|卷[一二三四五六七八九十\d]+|第[一二三四五六七八九十\d]+[部卷册季])\s*[）)\]】]?\s*$/;
+export function seriesKey(it) {
+  let t = norm(it.title);
+  for (let i = 0; i < 2; i++) t = t.replace(VOLUME_RE, '');
+  return t && t.length >= 2 ? `${t}|${norm((it.authors || [])[0])}` : null;
+}
+
+// 同组的书合并题材（取并集；有具体二级时去掉"其他"；有 AI 结果的只用 AI 结果）
+export function unifySeries(books) {
+  const groups = new Map();
+  for (const it of books) {
+    const k = seriesKey(it);
+    if (k) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
+  }
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    // 组里有 AI 归类过的书，就以 AI 的结果为准（规则的误判不再传染给同组的书）
+    const ai = g.filter((i) => i.topicSource === 'ai');
+    const src = ai.length ? ai : g;
+    const topics = [...new Set(src.flatMap((i) => i.topics || []))];
+    let subs = [...new Set(src.flatMap((i) => i.subtopics || []))];
+    subs = subs.filter((x) => !x.endsWith(`/${OTHER_SUB}`) || !subs.some((y) => y !== x && y.startsWith(x.split('/')[0] + '/')));
+    for (const i of g) { i.topics = topics.slice(); i.subtopics = subs.slice(); }
+  }
+}
+
+// 显示时套用：给书籍加上 topics（一级题材，含"冷门书"）、subtopics（二级）、dtags（清洗后的豆瓣标签）、
+// topicSource（'ai' 或 'rule'）。有 AI 结果就用 AI 的，AI 拿不准（空结果）或没开 AI 就用规则
+export function applyDetails(items, details, llm = null) {
+  const books = [];
   for (const it of Object.values(items)) {
     if (it.type !== 'book') continue;
+    books.push(it);
     const d = details[it.key];
-    if (!d) { it.topics = []; it.subtopics = []; it.dtags = []; continue; }
-    const tags = cleanTags(d.tags, it);
+    const tags = d ? cleanTags(d.tags, it) : [];
     it.dtags = tags;
-    const c = classify(tags);
-    it.topics = c.topics;
-    it.subtopics = c.subtopics;
-    if (isObscure(d)) it.topics.push(OBSCURE_TAG);
-    it.votes = d.votes;
+    const ai = llm && llm[it.key];
+    if (ai && ai.topics && ai.topics.length) {
+      it.topics = ai.topics.slice();
+      it.subtopics = (ai.subtopics || []).slice();
+      it.topicSource = 'ai';
+    } else if (d) {
+      const c = classify(tags);
+      it.topics = c.topics;
+      it.subtopics = c.subtopics;
+      it.topicSource = 'rule';
+    } else {
+      it.topics = []; it.subtopics = []; it.topicSource = null;
+    }
+    if (d) it.votes = d.votes;
   }
+  unifySeries(books);
+  for (const it of books) if (isObscure(details[it.key])) it.topics.push(OBSCURE_TAG);
 }

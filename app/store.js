@@ -23,7 +23,7 @@ export async function saveMeta(patch) {
 }
 
 export async function clearAll() {
-  await chrome.storage.local.remove([ITEMS, META, 'dt_authors', 'dt_details']);
+  await chrome.storage.local.remove([ITEMS, META, 'dt_authors', 'dt_details', 'dt_llm']); // AI 设置（API Key）保留
 }
 
 // 作者文化归属的查询结果：{ 作者名: { region, qid, reason, at } }
@@ -48,4 +48,30 @@ export async function loadDetails() {
 
 export async function saveDetails(map) {
   await chrome.storage.local.set({ [DETAILS]: map });
+}
+
+// AI 归类结果：{ 'book:ID': { topics, subtopics, sig, at, model } }
+const LLM = 'dt_llm';
+
+export async function loadLlm() {
+  const r = await chrome.storage.local.get(LLM);
+  return r[LLM] || {};
+}
+
+export async function saveLlm(map) {
+  await chrome.storage.local.set({ [LLM]: map });
+}
+
+// AI 设置：{ apiKey, baseUrl, model, enabled }。API Key 只存在这个浏览器里
+const SETTINGS = 'dt_settings';
+
+export async function loadSettings() {
+  const r = await chrome.storage.local.get(SETTINGS);
+  return r[SETTINGS] || {};
+}
+
+export async function saveSettings(patch) {
+  const s = { ...(await loadSettings()), ...patch };
+  await chrome.storage.local.set({ [SETTINGS]: s });
+  return s;
 }

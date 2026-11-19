@@ -1,7 +1,8 @@
 // 侧边栏面板：第一次读取、后台自动同步、作者文化归属查询。
-import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors, loadDetails, saveDetails } from './store.js';
+import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors, loadDetails, saveDetails, loadLlm, saveLlm, loadSettings, saveSettings } from './store.js';
+import { classifyWithLlm, booksNeedingLlm, LLM_DEFAULTS } from './llm.js';
 import { fetchDetails } from './details.js';
-import { applyDetails } from './topics.js';
+import { applyDetails, classify, cleanTags } from './topics.js';
 import { reparseItem } from './listpage.js';
 import { PARSER_VERSION } from './parser.js';
 import { runSync, detectUid, parseUidInput, LISTS } from './sync.js';
@@ -26,6 +27,13 @@ let lastError = null;
 let bgText = ''; // 读取豆瓣的进度
 let authorText = ''; // 查询作者归属的进度
 let detectedUid = null;
+let aiText = ''; // AI 归类的进度
+let aiError = null;
+let aiBusy = false;
+let aiOpen = false; // AI 设置是否展开
+
+// 开着 AI 并且填了 Key
+const aiOn = (st) => !!(st.apiKey && st.enabled !== false);
 
 function fmtTime(ts) {
   if (!ts) return '';
@@ -46,7 +54,8 @@ async function refreshList() {
   const items = await loadItems();
   const authors = await loadAuthors();
   applyAuthorRegions(items, authors);
-  applyDetails(items, await loadDetails());
+  const settings = await loadSettings();
+  applyDetails(items, await loadDetails(), aiOn(settings) ? await loadLlm() : null);
   const list = Object.values(items);
   if (!ui) ui = window.DoubanTagsUI.mount($('root'), list, { persist: true, emptyHtml: '' });
   else ui.update(list);
@@ -98,11 +107,21 @@ async function renderStatus(info) {
   $('status').innerHTML = '';
 }
 
+// 正在填 AI 设置时不重绘底部，免得输入被冲掉；离开输入框后再补一次
+let footPending = false;
+document.addEventListener('focusout', (e) => {
+  if (footPending && e.target.closest && e.target.closest('.dt-ai')) setTimeout(() => {
+    if (!document.activeElement || !document.activeElement.closest('.dt-ai')) { footPending = false; renderFoot(); }
+  }, 0);
+});
+
 async function renderFoot() {
+  const active = document.activeElement;
+  if (active && active.closest && active.closest('.dt-ai') && active.tagName === 'INPUT') { footPending = true; return; }
   const meta = await loadMeta();
   const count = Object.keys(await loadItems()).length;
   if (!count) { $('foot').innerHTML = ''; return; }
-  const lines = [bgText, authorText].filter(Boolean).map(esc).join('<br>');
+  const lines = [bgText, authorText, aiText].filter(Boolean).map(esc).join('<br>');
   const state = busy
     ? `${lines || '后台同步中…'} <button class="dt-link-btn" id="stop-bg">暂停</button>`
     : lastError
@@ -113,7 +132,10 @@ async function renderFoot() {
       <button class="dt-link-btn" id="update" title="立即读取最新标记的内容"${busy ? ' disabled' : ''}>更新</button>
       <button class="dt-link-btn" id="full" title="重新读取全部清单，同步删除和修改"${busy ? ' disabled' : ''}>全部重读</button>
       <button class="dt-link-btn" id="reset" title="清空本地数据"${busy ? ' disabled' : ''}>清空</button>
-    </span>`;
+      <button class="dt-link-btn" id="ai-toggle" title="用 AI 判断书的题材">AI 归类</button>
+    </span>${await aiPanelHtml()}`;
+  bindAiPanel();
+  $('ai-toggle').onclick = () => { aiOpen = !aiOpen; renderFoot(); };
   if ($('stop-bg')) $('stop-bg').onclick = () => { stopRequested = true; bgText = '正在暂停…'; renderFoot(); };
   $('update').onclick = () => meta.uid && background([{ mode: 'update' }], meta.uid);
   $('full').onclick = () => meta.uid && background([{ mode: 'full' }], meta.uid);
@@ -124,6 +146,101 @@ async function renderFoot() {
       $('reset').dataset.confirm = '1'; $('reset').textContent = '再点一次确认清空';
     }
   };
+}
+
+// AI 归类设置区（在底部，点"AI 归类"展开）
+async function aiPanelHtml() {
+  const st = await loadSettings();
+  const items = await loadItems();
+  const books = Object.values(items).filter((i) => i.type === 'book').length;
+  const left = booksNeedingLlm(items, await loadLlm()).length;
+  const status = !st.apiKey ? '未开启：现在书的题材由关键词规则判断。填入 API Key 后改由 AI 判断，更准。'
+    : st.enabled === false ? '已关闭：现在用关键词规则判断题材。'
+      : `已开启：${books - left} / ${books} 本已由 AI 归类${aiBusy ? '（进行中）' : ''}。AI 拿不准的书仍用规则。`;
+  const err = aiError ? `<p class="dt-err">${esc(aiError)}</p>` : '';
+  if (!aiOpen) return err ? `<div class="dt-ai-mini">${err}</div>` : '';
+  return `<div class="dt-ai">
+    <p><strong>AI 归类</strong>　${esc(status)}</p>${err}
+    <input class="dt-uid" id="ai-key" type="password" placeholder="DeepSeek API Key（sk- 开头）" value="${esc(st.apiKey || '')}" autocomplete="off">
+    <details class="dt-ai-adv"><summary>换别的模型</summary>
+      <input class="dt-uid" id="ai-base" placeholder="${esc(LLM_DEFAULTS.baseUrl)}" value="${esc(st.baseUrl || '')}">
+      <input class="dt-uid" id="ai-model" placeholder="${esc(LLM_DEFAULTS.model)}" value="${esc(st.model || '')}">
+      <p class="dt-hint">兼容 OpenAI 接口格式的服务都可以，填接口地址和模型名。非 DeepSeek 的地址需要在 manifest.json 里加上访问权限。</p>
+    </details>
+    <div class="dt-actions">
+      <button class="dt-primary" id="ai-save">保存并开始</button>
+      ${st.apiKey ? `<button class="dt-secondary" id="ai-off">${st.enabled === false ? '重新开启' : '关闭 AI'}</button>` : ''}
+      <button class="dt-secondary" id="ai-export">导出对比表</button>
+    </div>
+    <p class="dt-hint">只会把书名和作者发给 AI 服务，API Key 只存在这个浏览器里。申请 Key：platform.deepseek.com/api_keys（需要充值，几百本书一次大约几分钱）。</p>
+  </div>`;
+}
+
+function bindAiPanel() {
+  if (!$('ai-save')) return;
+  $('ai-save').onclick = async () => {
+    const patch = { apiKey: $('ai-key').value.trim(), baseUrl: $('ai-base').value.trim(), model: $('ai-model').value.trim(), enabled: true };
+    await saveSettings(patch);
+    aiError = null;
+    renderFoot();
+    runAi();
+  };
+  if ($('ai-off')) $('ai-off').onclick = async () => {
+    const st = await loadSettings();
+    await saveSettings({ enabled: st.enabled === false });
+    await refreshList(); renderFoot();
+    if (st.enabled === false) runAi();
+  };
+  $('ai-export').onclick = exportCompare;
+}
+
+// 让 AI 给还没归类的书归类（只发书名和作者）
+async function runAi() {
+  const settings = await loadSettings();
+  if (!aiOn(settings) || aiBusy) return;
+  aiBusy = true;
+  try {
+    const cache = await loadLlm();
+    await classifyWithLlm({
+      items: await loadItems(), cache, settings, save: saveLlm,
+      shouldStop: () => stopRequested,
+      onProgress: ({ done, total }) => {
+        aiText = total && done < total ? `AI 正在归类书的题材（${done} / ${total}）` : '';
+        renderFoot(); refreshList();
+      },
+    });
+    aiError = null;
+  } catch (e) {
+    aiError = e.message || String(e);
+    console.warn('[douban-tags] AI 归类', e);
+  } finally {
+    aiBusy = false; aiText = '';
+    await refreshList(); renderFoot();
+  }
+}
+
+// 导出对比表（CSV）：每本书的规则题材和 AI 题材，方便核对
+async function exportCompare() {
+  const items = await loadItems();
+  const details = await loadDetails();
+  const llm = await loadLlm();
+  const fmt = (t, s) => [...t, ...s.filter((x) => !x.endsWith('/其他'))].join(' ');
+  const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const rows = [['书名', '作者', '状态', '规则题材', 'AI 题材', '是否一致']];
+  for (const it of Object.values(items)) {
+    if (it.type !== 'book') continue;
+    const d = details[it.key];
+    const rule = d ? classify(cleanTags(d.tags, it)) : { topics: [], subtopics: [] };
+    const ai = llm[it.key] || { topics: [], subtopics: [] };
+    const a = fmt(rule.topics, rule.subtopics);
+    const b = fmt(ai.topics || [], ai.subtopics || []);
+    rows.push([it.title, (it.authors || []).join('、'), it.status, a, b || '（AI 未归类或拿不准）', a === b ? '一致' : '不同']);
+  }
+  const csv = '\ufeff' + rows.map((r) => r.map(q).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: `豆瓣书影标签-题材对比-${new Date().toISOString().slice(0, 10)}.csv` });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 async function sync(uid, mode, lists, onInfo) {
@@ -181,6 +298,7 @@ async function background(steps, uid) {
   busy = true; foreground = false; stopRequested = false; lastError = null;
   // 作者查询访问的是维基百科，和读取豆瓣互不影响，所以一开始就并行做
   const authorsTask = lookupAuthors().catch((e) => console.warn('[douban-tags] 查询作者出错', e));
+  const aiTask = runAi(); // AI 归类只发书名和作者给 AI 服务，和读取豆瓣互不影响
   try {
     for (const step of steps) {
       if (stopRequested) break;
@@ -197,12 +315,15 @@ async function background(steps, uid) {
     await authorsTask;
     // 这次同步新读到的书，作者还没查过的，补查一次
     if (!stopRequested) await lookupAuthors();
+    await aiTask;
+    if (!stopRequested) await runAi(); // 这次新读到的书
   } catch (e) {
     lastError = e.message || String(e);
     console.error('[douban-tags]', e);
     bgText = '';
     renderFoot();
     await authorsTask; // 读取豆瓣出错时，作者查询照常做完
+    await aiTask;
   } finally {
     busy = false;
     bgText = '';
