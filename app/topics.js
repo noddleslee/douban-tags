@@ -39,6 +39,25 @@ export function cleanTags(tags, item = {}) {
   return out;
 }
 
+// 繁体常用字转简体（只用于比较标签是否重复）
+const T2S = { 歷: '历', 學: '学', 說: '说', 書: '书', 藝: '艺', 術: '术', 攝: '摄', 傳: '传', 記: '记', 國: '国', 經: '经',
+  濟: '济', 會: '会', 華: '华', 漢: '汉', 臺: '台', 灣: '湾', 東: '东', 圖: '图', 畫: '画', 劇: '剧', 樂: '乐', 戰: '战',
+  爭: '争', 實: '实', 紀: '纪', 遊: '游', 愛: '爱', 詩: '诗', 隨: '随', 筆: '笔', 論: '论', 評: '评' };
+const simp = (s) => [...norm(s)].map((c) => T2S[c] || c).join('');
+
+// 发给 AI 参考的豆瓣标签：在清洗基础上再去重——简繁写法相同的只留一个；
+// 一个标签和排在它前面的标签互相包含（"推理小说""日本推理"都包含"推理"），只留前面那个。最多 limit 个
+export function refTags(tags, limit = 10) {
+  const kept = [];
+  for (const t of tags || []) {
+    const n = simp(t);
+    if (!n || kept.some((k) => { const m = simp(k); return m === n || (m.length >= 2 && n.includes(m)) || (n.length >= 2 && m.includes(n)); })) continue;
+    kept.push(t);
+    if (kept.length >= limit) break;
+  }
+  return kept;
+}
+
 // 一条规则是否命中（keys 包含即算；exact 完全一致，可限前 top 个；skip 里的词所在标签不看；unless 出现就不算）
 function ruleHits(rule, ns) {
   const skip = (rule.skip || []).map(norm);
@@ -86,9 +105,11 @@ export function isObscure(detail) {
 }
 
 // 同一部书的上下册、第一二部：书名去掉卷次后相同、第一作者相同，就算一组
-const VOLUME_RE = /[\s:：·,，]*[（(\[【]?\s*(上|中|下|上册|中册|下册|上卷|下卷|全集|[一二三四五六七八九十]+|\d+|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]+|卷[一二三四五六七八九十\d]+|第[一二三四五六七八九十\d]+[部卷册季])\s*[）)\]】]?\s*$/;
+const VOLUME_RE = /[\s:：·,，]*[（(\[【]?\s*(上中下|上下|上|中|下|上册|中册|下册|上卷|下卷|大全集|全集|合集|套装|全[一二三四五六七八九十\d]+[部卷册]|[一二三四五六七八九十]+|\d+|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]+|卷[一二三四五六七八九十\d]+|第[一二三四五六七八九十\d]+[部卷册季])\s*[）)\]】]?\s*$/;
+// 分册副标题：《大医·破晓篇》《大医·日出篇》（"·"或"："后面是"××篇/卷/部/册"）
+const PART_RE = /[·：:][^·：:]{1,6}[篇卷部册]$/;
 export function seriesKey(it) {
-  let t = norm(it.title);
+  let t = norm(it.title).replace(PART_RE, '');
   for (let i = 0; i < 2; i++) t = t.replace(VOLUME_RE, '');
   return t && t.length >= 2 ? `${t}|${norm((it.authors || [])[0])}` : null;
 }
@@ -112,6 +133,21 @@ export function unifySeries(books) {
   }
 }
 
+// AI 只给了一级、二级是"其他"时，用豆瓣标签按规则补二级（规则也没有就保持"其他"）
+export function fillSubs(topics, subs, tags) {
+  const out = subs.filter((s) => topics.includes(s.split('/')[0]));
+  const rule = tags && tags.length ? classify(tags).subtopics : [];
+  for (const t of topics) {
+    const mine = out.filter((s) => s.startsWith(`${t}/`));
+    if (mine.length && !mine.every((s) => s === `${t}/${OTHER_SUB}`)) continue;
+    const add = rule.filter((s) => s.startsWith(`${t}/`) && s !== `${t}/${OTHER_SUB}`);
+    if (!add.length) continue;
+    for (const s of mine) out.splice(out.indexOf(s), 1);
+    out.push(...add);
+  }
+  return out;
+}
+
 // 显示时套用：给书籍加上 topics（一级题材，含"冷门书"）、subtopics（二级）、dtags（清洗后的豆瓣标签）、
 // topicSource（'ai' 或 'rule'）。有 AI 结果就用 AI 的，AI 拿不准（空结果）或没开 AI 就用规则
 export function applyDetails(items, details, llm = null) {
@@ -125,7 +161,7 @@ export function applyDetails(items, details, llm = null) {
     const ai = llm && llm[it.key];
     if (ai && ai.topics && ai.topics.length) {
       it.topics = ai.topics.slice();
-      it.subtopics = (ai.subtopics || []).slice();
+      it.subtopics = fillSubs(it.topics, ai.subtopics || [], tags);
       it.topicSource = 'ai';
     } else if (d) {
       const c = classify(tags);

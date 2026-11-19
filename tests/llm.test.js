@@ -1,8 +1,8 @@
 // AI 归类：提示词、结果校验、调用接口（用假的 fetch）、缓存、上下册合并。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { systemPrompt, userPrompt, validate, askBatch, classifyWithLlm, booksNeedingLlm, bookSig, LlmError } from '../app/llm.js';
-import { applyDetails, seriesKey } from '../app/topics.js';
+import { systemPrompt, userPrompt, validate, askBatch, classifyWithLlm, booksNeedingLlm, bookSig, groupsToAsk, LlmError } from '../app/llm.js';
+import { applyDetails, seriesKey, refTags, fillSubs } from '../app/topics.js';
 
 const fakeFetch = (replies) => {
   const calls = [];
@@ -16,11 +16,27 @@ const fakeFetch = (replies) => {
   return fn;
 };
 
-test('提示词：含题材清单和 json 字样，用户消息只有书名和作者', () => {
+test('提示词：含题材清单、二级定义和 json 字样；用户消息是书名、作者、参考标签', () => {
   const sp = systemPrompt();
-  assert.ok(sp.includes('json') && sp.includes('小说：推理悬疑') && sp.includes('女性主义'));
-  const up = JSON.parse(userPrompt([{ id: '1', title: '长安十二时辰（上）', authors: ['马伯庸'], publisher: 'x' }]));
-  assert.deepEqual(up, [{ id: '1', title: '长安十二时辰（上）', author: '马伯庸' }]);
+  assert.ok(sp.includes('json') && sp.includes('小说：推理悬疑') && sp.includes('近现代小说') && sp.includes('女性主义'));
+  const up = JSON.parse(userPrompt([{ id: '1', title: '长安十二时辰（上）', authors: ['马伯庸'], tags: ['悬疑', '历史小说'], publisher: 'x' }]));
+  assert.deepEqual(up, [{ id: '1', title: '长安十二时辰（上）', author: '马伯庸', tags: ['悬疑', '历史小说'] }]);
+});
+
+test('参考标签去重：简繁相同、包含前面标签的只留一个', () => {
+  assert.deepEqual(refTags(['推理', '小说', '推理小说', '悬疑', '日本文学', '日本推理', '歷史', '历史']), ['推理', '小说', '悬疑', '日本文学', '歷史']);
+  assert.equal(refTags(Array.from({ length: 20 }, (_, i) => `标签${'甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉'[i]}`)).length, 10);
+});
+
+test('小说不同时归历史一级（兜底）', () => {
+  assert.deepEqual(validate({ topics: ['小说', '历史'], subtopics: ['小说/历史小说', '历史/世界史'] }),
+    { topics: ['小说'], subtopics: ['小说/历史小说'] });
+});
+
+test('AI 缺二级时用豆瓣标签补', () => {
+  assert.deepEqual(fillSubs(['小说'], ['小说/其他'], ['小说', '悬疑', '推理']), ['小说/推理悬疑']);
+  assert.deepEqual(fillSubs(['小说'], ['小说/科幻'], ['小说', '悬疑']), ['小说/科幻']); // AI 给了就不动
+  assert.deepEqual(fillSubs(['小说'], ['小说/其他'], ['小说']), ['小说/其他']);
 });
 
 test('结果校验：清单外的词丢掉，二级必须属于选中的一级，缺二级补"其他"', () => {
@@ -59,10 +75,37 @@ test('批量归类：分批、存缓存；已问过且书名作者没变的不�
   assert.equal(saves, 2);
   assert.deepEqual(cache['book:1'].topics, ['历史']);
   assert.deepEqual(cache['book:12'].topics, []);
-  assert.equal(cache['book:1'].sig, bookSig(items['book:1']));
+  assert.equal(cache['book:1'].sig, bookSig(items['book:1'], {}));
   assert.equal(booksNeedingLlm(items, cache).length, 0);
   items['book:3'].title = '书3（修订版）';
   assert.deepEqual(booksNeedingLlm(items, cache).map((i) => i.key), ['book:3']);
+});
+
+test('同一部书只问一次：多版本、上下册、分册合成一组，结果套给每一本', async () => {
+  const items = {
+    'book:1': { key: 'book:1', id: '1', type: 'book', title: '状元媒', authors: ['叶广芩'] },
+    'book:2': { key: 'book:2', id: '2', type: 'book', title: '状元媒', authors: ['叶广芩'] },
+    'book:3': { key: 'book:3', id: '3', type: 'book', title: '大医·破晓篇', authors: ['马伯庸'] },
+    'book:4': { key: 'book:4', id: '4', type: 'book', title: '大医·日出篇', authors: ['马伯庸'] },
+    'book:5': { key: 'book:5', id: '5', type: 'book', title: '活着', authors: ['余华'] },
+  };
+  const details = { 'book:2': { tags: ['小说', '北京', '京味'] }, 'book:3': { tags: ['小说', '医学'] }, 'book:4': { tags: ['历史', '民国'] } };
+  const groups = groupsToAsk(items, {}, details);
+  assert.equal(groups.length, 3);
+  const g = groups.find((x) => x.members.length === 2 && x.title === '状元媒');
+  assert.equal(g.id, '2'); // 标签多的那本当代表
+  const dayi = groups.find((x) => x.title.startsWith('大医'));
+  assert.deepEqual(dayi.tags.sort(), ['医学', '历史', '小说', '民国'].sort());
+  const f = fakeFetch([{ results: groups.map((x) => ({ id: x.id, topics: ['小说'], subtopics: ['小说/近现代小说'] })) }]);
+  const cache = {};
+  await classifyWithLlm({ items, cache, details, settings: { apiKey: 'k' }, save: async () => {}, fetchImpl: f });
+  assert.equal(f.calls.length, 1);
+  assert.equal(JSON.parse(f.calls[0].body.messages[1].content).length, 3);
+  assert.deepEqual(cache['book:1'].subtopics, cache['book:2'].subtopics);
+  assert.deepEqual(cache['book:3'].subtopics, ['小说/近现代小说']);
+  assert.equal(booksNeedingLlm(items, cache, details).length, 0);
+  details['book:5'] = { tags: ['小说', '余华'] }; // 标签变了 → 重新问
+  assert.deepEqual(booksNeedingLlm(items, cache, details).map((i) => i.key), ['book:5']);
 });
 
 test('显示时套用：有 AI 结果用 AI 的，AI 拿不准用规则；上下册合并成同一组题材', () => {

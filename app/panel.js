@@ -1,6 +1,6 @@
 // 侧边栏面板：第一次读取、后台自动同步、作者文化归属查询。
 import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors, loadDetails, saveDetails, loadLlm, saveLlm, loadSettings, saveSettings } from './store.js';
-import { classifyWithLlm, booksNeedingLlm, LLM_DEFAULTS } from './llm.js';
+import { classifyWithLlm, booksNeedingLlm, tagsFor, LLM_DEFAULTS } from './llm.js';
 import { fetchDetails } from './details.js';
 import { applyDetails, classify, cleanTags } from './topics.js';
 import { reparseItem } from './listpage.js';
@@ -153,7 +153,7 @@ async function aiPanelHtml() {
   const st = await loadSettings();
   const items = await loadItems();
   const books = Object.values(items).filter((i) => i.type === 'book').length;
-  const left = booksNeedingLlm(items, await loadLlm()).length;
+  const left = booksNeedingLlm(items, await loadLlm(), await loadDetails()).length;
   const status = !st.apiKey ? '未开启：现在书的题材由关键词规则判断。填入 API Key 后改由 AI 判断，更准。'
     : st.enabled === false ? '已关闭：现在用关键词规则判断题材。'
       : `已开启：${books - left} / ${books} 本已由 AI 归类${aiBusy ? '（进行中）' : ''}。AI 拿不准的书仍用规则。`;
@@ -201,8 +201,8 @@ async function runAi() {
   aiBusy = true;
   try {
     const cache = await loadLlm();
-    await classifyWithLlm({
-      items: await loadItems(), cache, settings, save: saveLlm,
+    const asked = await classifyWithLlm({
+      items: await loadItems(), cache, details: await loadDetails(), settings, save: saveLlm,
       shouldStop: () => stopRequested,
       onProgress: ({ done, total }) => {
         aiText = total && done < total ? `AI 正在归类书的题材（${done} / ${total}）` : '';
@@ -210,6 +210,7 @@ async function runAi() {
       },
     });
     aiError = null;
+    if (asked) await saveCompareFile(); // 这次有新归类的书：把对比表存到下载文件夹，方便核对
   } catch (e) {
     aiError = e.message || String(e);
     console.warn('[douban-tags] AI 归类', e);
@@ -219,28 +220,49 @@ async function runAi() {
   }
 }
 
-// 导出对比表（CSV）：每本书的规则题材和 AI 题材，方便核对
-async function exportCompare() {
+// 对比表（CSV）：每本书发给 AI 的标签、规则题材、AI 原始题材、面板最终显示的题材
+async function compareCsv() {
   const items = await loadItems();
   const details = await loadDetails();
   const llm = await loadLlm();
-  const fmt = (t, s) => [...t, ...s.filter((x) => !x.endsWith('/其他'))].join(' ');
+  const settings = await loadSettings();
+  const shown = JSON.parse(JSON.stringify(items));
+  applyDetails(shown, details, aiOn(settings) ? llm : null);
+  const fmt = (t, s) => [...(t || []), ...(s || []).filter((x) => !x.endsWith('/其他'))].join(' ');
   const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-  const rows = [['书名', '作者', '状态', '规则题材', 'AI 题材', '是否一致']];
+  const rows = [['豆瓣ID', '书名', '作者', '状态', '发给AI的豆瓣标签', '规则题材', 'AI原始题材', '面板显示', '来源', '规则与面板是否一致']];
   for (const it of Object.values(items)) {
     if (it.type !== 'book') continue;
     const d = details[it.key];
     const rule = d ? classify(cleanTags(d.tags, it)) : { topics: [], subtopics: [] };
-    const ai = llm[it.key] || { topics: [], subtopics: [] };
+    const ai = llm[it.key];
+    const fin = shown[it.key];
     const a = fmt(rule.topics, rule.subtopics);
-    const b = fmt(ai.topics || [], ai.subtopics || []);
-    rows.push([it.title, (it.authors || []).join('、'), it.status, a, b || '（AI 未归类或拿不准）', a === b ? '一致' : '不同']);
+    const c = fmt((fin.topics || []).filter((t) => t !== '冷门书'), fin.subtopics);
+    rows.push([it.id, it.title, (it.authors || []).join('、'), it.status, tagsFor(it, details).join(' '), a,
+      ai ? (fmt(ai.topics, ai.subtopics) || '（拿不准）') : '（未归类）', c, fin.topicSource === 'ai' ? 'AI' : '规则', a === c ? '一致' : '不同']);
   }
-  const csv = '\ufeff' + rows.map((r) => r.map(q).join(',')).join('\n');
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  return '\ufeff' + rows.map((r) => r.map(q).join(',')).join('\n');
+}
+
+// 手动导出（点按钮）
+async function exportCompare() {
+  const url = URL.createObjectURL(new Blob([await compareCsv()], { type: 'text/csv;charset=utf-8' }));
   const a = Object.assign(document.createElement('a'), { href: url, download: `豆瓣书影标签-题材对比-${new Date().toISOString().slice(0, 10)}.csv` });
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// 自动保存：下载文件夹/douban-tags-data/题材对比.csv，每次覆盖，不弹窗
+async function saveCompareFile() {
+  if (!chrome.downloads) return;
+  try {
+    const url = URL.createObjectURL(new Blob([await compareCsv()], { type: 'text/csv;charset=utf-8' }));
+    await chrome.downloads.download({ url, filename: 'douban-tags-data/题材对比.csv', conflictAction: 'overwrite', saveAs: false });
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    console.warn('[douban-tags] 保存对比表失败', e);
+  }
 }
 
 async function sync(uid, mode, lists, onInfo) {

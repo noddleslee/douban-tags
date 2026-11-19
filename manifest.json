@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "豆瓣书影标签",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "在豆瓣页面右侧打开面板，按类型、国家、年代、演员、作者等自动标签筛选你想读、想看的书和电影。数据只存在你自己的浏览器里。",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "unlimitedStorage", "sidePanel"],
+  "permissions": ["storage", "unlimitedStorage", "sidePanel", "downloads"],
   "host_permissions": [
     "https://www.douban.com/*",
     "https://movie.douban.com/*",
