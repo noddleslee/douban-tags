@@ -107,3 +107,6 @@ a:hover { text-decoration: underline; }
 .dt-ai .dt-uid { margin: 6px 0 0; }
 .dt-ai-adv summary { cursor: pointer; color: var(--text-3); margin-top: 6px; }
 .dt-ai-mini { flex-basis: 100%; font-size: 12px; }
+
+.dt-forms { margin-top: -4px; align-items: center; }
+.dt-form { font-size: 12px; padding: 2px 10px; }

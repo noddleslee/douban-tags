@@ -5,7 +5,8 @@
     movie: { wish: '想看', do: '在看', collect: '看过' },
     all: { wish: '想读 / 想看', do: '在读 / 在看', collect: '读过 / 看过' },
   };
-  const TABS = [['book', '书籍'], ['movie', '电影'], ['all', '全部']];
+  const TABS = [['book', '书籍'], ['movie', '影视'], ['all', '全部']];
+  const FORMS = [['any', '不限'], ['电影', '电影'], ['电视剧', '电视剧']];
 
   function durationBucket(m) {
     if (!m) return [];
@@ -34,7 +35,7 @@
   };
   const FACETS_BY_TAB = {
     book: ['topics', 'myTags', 'countries', 'decade', 'authors', 'dtags', 'publisher', 'rating'],
-    movie: ['myTags', 'genres', 'countries', 'languages', 'decade', 'cast', 'directors', 'duration', 'rating'],
+    movie: ['topics', 'myTags', 'genres', 'countries', 'languages', 'decade', 'cast', 'directors', 'duration', 'rating'],
     all: ['myTags', 'genres', 'topics', 'countries', 'decade', 'cast', 'directors', 'authors', 'rating'],
   };
   const OPEN_BY_DEFAULT = new Set(['topics', 'myTags', 'genres', 'countries', 'decade']);
@@ -57,7 +58,7 @@
   function saveUiState(persist, s) {
     if (!persist) return;
     try {
-      localStorage.setItem('dt_ui', JSON.stringify({ tab: s.tab, status: s.status, open: [...s.open], seen: [...s.seen] }));
+      localStorage.setItem('dt_ui', JSON.stringify({ tab: s.tab, status: s.status, form: s.form, open: [...s.open], seen: [...s.seen] }));
     } catch { /* 存不了就算了 */ }
   }
 
@@ -67,6 +68,7 @@
       items: items || [],
       tab: saved.tab || 'book',
       status: saved.status || 'wish',
+      form: saved.form || 'any', // 影视：全部 / 电影 / 电视剧
       query: '',
       sel: new Map(), // facetKey -> Set(values)
       open: new Set(saved.open || OPEN_BY_DEFAULT),
@@ -79,6 +81,7 @@
     function baseFilter(i) {
       if (st.tab !== 'all' && i.type !== st.tab) return false;
       if (st.status !== 'any' && i.status !== st.status) return false;
+      if (st.tab === 'movie' && st.form !== 'any' && i.form !== st.form) return false;
       if (st.query) {
         const q = st.query.toLowerCase();
         const hay = [i.titleFull, ...(i.cast || []), ...(i.directors || []), ...(i.authors || []), ...(i.myTags || [])]
@@ -212,7 +215,7 @@
 
     function rowHtml(i) {
       const sub = i.type === 'movie'
-        ? [i.year, (i.countries || []).slice(0, 2).join(' '), (i.genres || []).slice(0, 3).join(' ')]
+        ? [i.form === '电视剧' ? '剧集' : '', i.year, (i.countries || []).slice(0, 2).join(' '), (i.genres || []).slice(0, 3).join(' '), topicWords(i).slice(0, 1).join('')]
         : [(i.authors || []).slice(0, 2).join('、'), i.year, topicWords(i).slice(0, 2).join(' ')];
       const stars = i.rating ? `<span class="dt-stars">${'★'.repeat(i.rating)}</span>` : '';
       const initial = esc(String(i.title || '?').slice(0, 1));
@@ -245,6 +248,7 @@
       const labels = STATUS_LABEL[st.tab];
       const selChips = [...st.sel.entries()].flatMap(([fk, vals]) => [...vals].map((v) => chip(fk, v)));
       const unit = st.tab === 'movie' ? '部' : st.tab === 'book' ? '本' : '条';
+      const formWord = st.tab === 'movie' && st.form !== 'any' ? st.form : '';
       const statusWord = st.status === 'any' ? '' : labels[st.status];
 
       if (!st.items.length) {
@@ -255,10 +259,11 @@
       root.innerHTML = `<div class="dt">
         <div class="dt-tabs">${TABS.map(([k, n]) => `<button class="dt-tab${st.tab === k ? ' on' : ''}" data-tab="${k}">${n}</button>`).join('')}</div>
         <div class="dt-pills">${['wish', 'collect', 'do', 'any'].map((s) => `<button class="dt-pill${st.status === s ? ' on' : ''}" data-status="${s}">${s === 'any' ? '全部' : esc(labels[s])}</button>`).join('')}</div>
+        ${st.tab === 'movie' ? `<div class="dt-pills dt-forms"><span class="dt-sublabel">形式</span>${FORMS.map(([k, n]) => `<button class="dt-pill dt-form${st.form === k ? ' on' : ''}" data-form="${esc(k)}">${esc(n)}</button>`).join('')}</div>` : ''}
         <input class="dt-search" type="search" placeholder="搜索标题、演员、作者，按回车" enterkeyhint="search" value="${esc(st.query)}">
         ${selChips.length ? `<div class="dt-selected">${selChips.join('')}<button class="dt-clear">清空</button></div>` : ''}
         <div class="dt-facets">${FACETS_BY_TAB[st.tab].map((fk) => facetHtml(fk, facetList(base, fk))).join('')}</div>
-        <div class="dt-head">${selChips.length || st.query ? '符合条件' : '全部'} · ${res.length} ${unit}${esc(statusWord)}</div>
+        <div class="dt-head">${selChips.length || st.query || (st.tab === 'movie' && st.form !== 'any') ? '符合条件' : '全部'} · ${res.length} ${unit}${esc(formWord)}${esc(statusWord)}</div>
         <div class="dt-list">${res.slice(0, st.shown).map(rowHtml).join('') || '<div class="dt-muted">没有同时符合这些条件的条目</div>'}</div>
         ${res.length > st.shown ? `<button class="dt-showmore">再显示 ${Math.min(PAGE, res.length - st.shown)} 条</button>` : ''}
         ${opts.footerHtml || ''}
@@ -283,6 +288,7 @@
       if (!t || !root.contains(t)) return;
       if (t.dataset.tab) { st.tab = t.dataset.tab; st.shown = PAGE; }
       else if (t.dataset.status) { st.status = t.dataset.status; st.shown = PAGE; }
+      else if (t.dataset.form) { st.form = t.dataset.form; st.shown = PAGE; }
       else if (t.classList.contains('dt-chip')) {
         const { fk, v } = t.dataset;
         const set = st.sel.get(fk) || new Set();

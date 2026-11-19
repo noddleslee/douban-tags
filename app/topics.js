@@ -115,10 +115,10 @@ export function seriesKey(it) {
 }
 
 // 同组的书合并题材（取并集；有具体二级时去掉"其他"；有 AI 结果的只用 AI 结果）
-export function unifySeries(books) {
+export function unifySeries(books, keyFn = seriesKey) {
   const groups = new Map();
   for (const it of books) {
-    const k = seriesKey(it);
+    const k = keyFn(it);
     if (k) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
   }
   for (const g of groups.values()) {

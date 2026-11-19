@@ -1,6 +1,7 @@
 // 侧边栏面板：第一次读取、后台自动同步、作者文化归属查询。
 import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors, loadDetails, saveDetails, loadLlm, saveLlm, loadSettings, saveSettings } from './store.js';
 import { classifyWithLlm, booksNeedingLlm, tagsFor, LLM_DEFAULTS } from './llm.js';
+import { applyMovieTopics, classifyMoviesWithLlm, moviesNeedingLlm, crossCheck, genreTopics, ruleForm } from './movie-topics.js';
 import { fetchDetails } from './details.js';
 import { applyDetails, classify, cleanTags } from './topics.js';
 import { reparseItem } from './listpage.js';
@@ -55,7 +56,9 @@ async function refreshList() {
   const authors = await loadAuthors();
   applyAuthorRegions(items, authors);
   const settings = await loadSettings();
-  applyDetails(items, await loadDetails(), aiOn(settings) ? await loadLlm() : null);
+  const llm = aiOn(settings) ? await loadLlm() : null;
+  applyDetails(items, await loadDetails(), llm);
+  applyMovieTopics(items, llm);
   const list = Object.values(items);
   if (!ui) ui = window.DoubanTagsUI.mount($('root'), list, { persist: true, emptyHtml: '' });
   else ui.update(list);
@@ -153,10 +156,13 @@ async function aiPanelHtml() {
   const st = await loadSettings();
   const items = await loadItems();
   const books = Object.values(items).filter((i) => i.type === 'book').length;
-  const left = booksNeedingLlm(items, await loadLlm(), await loadDetails()).length;
+  const llmCache = await loadLlm();
+  const left = booksNeedingLlm(items, llmCache, await loadDetails()).length;
+  const movies = Object.values(items).filter((i) => i.type === 'movie').length;
+  const mLeft = moviesNeedingLlm(items, llmCache).length;
   const status = !st.apiKey ? '未开启：现在书的题材由关键词规则判断。填入 API Key 后改由 AI 判断，更准。'
     : st.enabled === false ? '已关闭：现在用关键词规则判断题材。'
-      : `已开启：${books - left} / ${books} 本已由 AI 归类${aiBusy ? '（进行中）' : ''}。AI 拿不准的书仍用规则。`;
+      : `已开启：书 ${books - left} / ${books} 本、影视 ${movies - mLeft} / ${movies} 部已由 AI 归类${aiBusy ? '（进行中）' : ''}。AI 拿不准的仍用规则。`;
   const err = aiError ? `<p class="dt-err">${esc(aiError)}</p>` : '';
   if (!aiOpen) return err ? `<div class="dt-ai-mini">${err}</div>` : '';
   return `<div class="dt-ai">
@@ -209,8 +215,18 @@ async function runAi() {
         renderFoot(); refreshList();
       },
     });
-    aiError = null;
     if (asked) await saveCompareFile(); // 这次有新归类的书：把对比表存到下载文件夹，方便核对
+    // 影视：只发片名、导演、年份、国家、豆瓣类型
+    const askedMovies = await classifyMoviesWithLlm({
+      items: await loadItems(), cache, settings, save: saveLlm,
+      shouldStop: () => stopRequested,
+      onProgress: ({ done, total }) => {
+        aiText = total && done < total ? `AI 正在归类影视题材（${done} / ${total}）` : '';
+        renderFoot(); refreshList();
+      },
+    });
+    if (askedMovies) await saveMovieCompareFile();
+    aiError = null;
   } catch (e) {
     aiError = e.message || String(e);
     console.warn('[douban-tags] AI 归类', e);
@@ -247,22 +263,50 @@ async function compareCsv() {
 
 // 手动导出（点按钮）
 async function exportCompare() {
-  const url = URL.createObjectURL(new Blob([await compareCsv()], { type: 'text/csv;charset=utf-8' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: `豆瓣书影标签-题材对比-${new Date().toISOString().slice(0, 10)}.csv` });
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  const day = new Date().toISOString().slice(0, 10);
+  for (const [name, csv] of [[`豆瓣书影标签-题材对比-${day}.csv`, await compareCsv()], [`豆瓣书影标签-影视对比-${day}.csv`, await movieCompareCsv()]]) {
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
 }
 
-// 自动保存：下载文件夹/douban-tags-data/题材对比.csv，每次覆盖，不弹窗
-async function saveCompareFile() {
+// 自动保存到 下载文件夹/douban-tags-data/，每次覆盖，不弹窗
+async function saveDataFile(name, csv) {
   if (!chrome.downloads) return;
   try {
-    const url = URL.createObjectURL(new Blob([await compareCsv()], { type: 'text/csv;charset=utf-8' }));
-    await chrome.downloads.download({ url, filename: 'douban-tags-data/题材对比.csv', conflictAction: 'overwrite', saveAs: false });
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    await chrome.downloads.download({ url, filename: `douban-tags-data/${name}`, conflictAction: 'overwrite', saveAs: false });
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) {
     console.warn('[douban-tags] 保存对比表失败', e);
   }
+}
+const saveCompareFile = async () => saveDataFile('题材对比.csv', await compareCsv());
+const saveMovieCompareFile = async () => saveDataFile('影视对比.csv', await movieCompareCsv());
+
+// 影视对比表：规则（按豆瓣类型）和 AI 的题材、电影/电视剧、AI 把握程度、和类型对不上的"待核"
+async function movieCompareCsv() {
+  const items = await loadItems();
+  const llm = await loadLlm();
+  const settings = await loadSettings();
+  const shown = JSON.parse(JSON.stringify(items));
+  applyMovieTopics(shown, aiOn(settings) ? llm : null);
+  const fmt = (t, s) => [...(t || []), ...(s || []).filter((x) => !x.endsWith('/其他'))].join(' ');
+  const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const rows = [['豆瓣ID', '片名', '导演', '年份', '国家', '豆瓣类型', '规则形式', 'AI形式', '规则题材', 'AI题材', 'AI把握', '面板显示', '来源', '待核']];
+  for (const it of Object.values(items)) {
+    if (it.type !== 'movie') continue;
+    const ai = llm[it.key];
+    const rule = genreTopics(it.genres);
+    const fin = shown[it.key];
+    rows.push([it.id, it.titleFull || it.title, (it.directors || []).join('、'), it.year, (it.countries || []).join('、'),
+      (it.genres || []).join('、'), ruleForm(it) || '', ai ? (ai.form || '') : '', fmt(rule.topics, rule.subtopics),
+      ai ? fmt(ai.topics, ai.subtopics) : '（未归类）', ai ? ai.confidence : '', fmt(fin.topics, fin.subtopics),
+      fin.topicSource === 'ai' ? 'AI' : '规则', ai ? crossCheck(ai.topics, it.genres).join(' ') : '']);
+  }
+  return '\ufeff' + rows.map((r) => r.map(q).join(',')).join('\n');
 }
 
 async function sync(uid, mode, lists, onInfo) {

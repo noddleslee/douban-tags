@@ -71,16 +71,16 @@ export function validate(raw, tax = taxonomy()) {
   return { topics, subtopics: subs };
 }
 
-// 问一批书。返回 { id: {topics, subtopics} }
-export async function askBatch(books, settings, fetchImpl = fetch) {
+// 发一次请求，返回模型给出的 JSON 对象（书籍、影视共用）
+export async function askJson({ system, user, settings, fetchImpl = fetch }) {
   const base = (settings.baseUrl || LLM_DEFAULTS.baseUrl).replace(/\/+$/, '');
   const body = {
     model: settings.model || LLM_DEFAULTS.model,
-    messages: [{ role: 'system', content: systemPrompt() }, { role: 'user', content: userPrompt(books) }],
+    messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     response_format: { type: 'json_object' },
     thinking: { type: 'disabled' }, // DeepSeek 默认开思考模式，归类用不着，关掉更快更省
     temperature: 0,
-    max_tokens: 2000,
+    max_tokens: 3000,
     stream: false,
   };
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -101,13 +101,17 @@ export async function askBatch(books, settings, fetchImpl = fetch) {
     const data = await res.json();
     const content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
     if (!content.trim()) continue; // DeepSeek 的 JSON 模式偶尔返回空内容：重试一次
-    let parsed;
-    try { parsed = JSON.parse(content); } catch { continue; }
-    const out = {};
-    for (const r of parsed.results || []) if (r && r.id != null) out[String(r.id)] = validate(r);
-    return out;
+    try { return JSON.parse(content); } catch { continue; }
   }
   throw new LlmError('EMPTY', 'AI 没有返回有效结果，下次再试');
+}
+
+// 问一批书。返回 { id: {topics, subtopics} }
+export async function askBatch(books, settings, fetchImpl = fetch) {
+  const parsed = await askJson({ system: systemPrompt(), user: userPrompt(books), settings, fetchImpl });
+  const out = {};
+  for (const r of parsed.results || []) if (r && r.id != null) out[String(r.id)] = validate(r);
+  return out;
 }
 
 // 需要问 AI 的书：没问过，或书名、作者、豆瓣标签、提示词版本变了
