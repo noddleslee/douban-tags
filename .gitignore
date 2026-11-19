@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 *.tmp.html
+# 个人书单的初始数据，只放在自己电脑上
+app/seed-details.json

@@ -23,7 +23,7 @@ export async function saveMeta(patch) {
 }
 
 export async function clearAll() {
-  await chrome.storage.local.remove([ITEMS, META, 'dt_authors']);
+  await chrome.storage.local.remove([ITEMS, META, 'dt_authors', 'dt_details']);
 }
 
 // 作者文化归属的查询结果：{ 作者名: { region, qid, reason, at } }
@@ -36,4 +36,16 @@ export async function loadAuthors() {
 
 export async function saveAuthors(map) {
   await chrome.storage.local.set({ [AUTHORS]: map });
+}
+
+// 书籍详情页数据：{ 'book:ID': { tags, votes, at } }。单独存放，避免和读取书单同时写同一份数据
+const DETAILS = 'dt_details';
+
+export async function loadDetails() {
+  const r = await chrome.storage.local.get(DETAILS);
+  return r[DETAILS] || {};
+}
+
+export async function saveDetails(map) {
+  await chrome.storage.local.set({ [DETAILS]: map });
 }

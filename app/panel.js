@@ -1,5 +1,7 @@
 // 侧边栏面板：第一次读取、后台自动同步、作者文化归属查询。
-import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors } from './store.js';
+import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors, loadDetails, saveDetails } from './store.js';
+import { fetchDetails } from './details.js';
+import { applyDetails } from './topics.js';
 import { reparseItem } from './listpage.js';
 import { PARSER_VERSION } from './parser.js';
 import { runSync, detectUid, parseUidInput, LISTS } from './sync.js';
@@ -44,6 +46,7 @@ async function refreshList() {
   const items = await loadItems();
   const authors = await loadAuthors();
   applyAuthorRegions(items, authors);
+  applyDetails(items, await loadDetails());
   const list = Object.values(items);
   if (!ui) ui = window.DoubanTagsUI.mount($('root'), list, { persist: true, emptyHtml: '' });
   else ui.update(list);
@@ -155,6 +158,23 @@ async function lookupAuthors() {
   authorText = '';
 }
 
+// 补读书籍详情页
+async function readDetails() {
+  const details = await loadDetails();
+  let n = 0;
+  await fetchDetails({
+    items: await loadItems(),
+    details,
+    save: saveDetails,
+    shouldStop: () => stopRequested,
+    onProgress: ({ done, total }) => {
+      bgText = total ? `正在读取书籍详情，生成题材标签（${done} / ${total}）` : '';
+      renderFoot();
+      if (++n % 5 === 0) refreshList();
+    },
+  });
+}
+
 // 后台任务：读取豆瓣（依次执行 steps）和查询作者归属同时进行，互不等待。只在底部显示进度。
 async function background(steps, uid) {
   if (busy) return;
@@ -171,6 +191,8 @@ async function background(steps, uid) {
         steps.push({ mode: 'full', lists: r.needFull });
       }
     }
+    // 读完书单后，补读还没读过的书籍详情页（豆瓣标签、评价人数），用来生成题材和冷门书标签
+    if (!stopRequested) await readDetails();
     bgText = '';
     await authorsTask;
     // 这次同步新读到的书，作者还没查过的，补查一次
@@ -241,8 +263,26 @@ async function reparseIfNeeded() {
   await saveMeta({ parserVersion: PARSER_VERSION });
 }
 
+// 插件文件夹里如果有 app/seed-details.json（预先读好的书籍详情），第一次打开时导入，省去后台读取的时间
+async function importSeedDetails() {
+  try {
+    const res = await fetch(chrome.runtime.getURL('app/seed-details.json'));
+    if (!res.ok) return;
+    const seed = await res.json();
+    const details = await loadDetails();
+    let added = 0;
+    for (const [k, v] of Object.entries(seed.items || {})) {
+      if (!details[k]) { details[k] = { tags: v.tags || [], votes: v.votes || 0, at: seed._at || Date.now() }; added++; }
+    }
+    if (added) await saveDetails(details);
+  } catch {
+    // 没有初始数据文件：正常情况，忽略
+  }
+}
+
 (async function init() {
   await reparseIfNeeded();
+  await importSeedDetails();
   const meta = await loadMeta();
   if (!meta.uid) detectedUid = await detectUid();
   // 老用户第一次升级到自动同步：以上次同步时间作为完整读取时间，避免一打开就重读全部

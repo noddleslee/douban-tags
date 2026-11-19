@@ -16,6 +16,7 @@
 
   // 每个筛选维度：从条目里取值的方法
   const FACETS = {
+    topics: { label: '题材', get: (i) => i.topics || [], limit: 40 },
     myTags: { label: '我的标签', get: (i) => i.myTags },
     genres: { label: '类型', get: (i) => i.genres },
     countries: { label: '国家 / 地区', get: (i) => i.countries, limit: 20, search: true },
@@ -25,15 +26,16 @@
     directors: { label: '导演', get: (i) => i.directors, people: true },
     authors: { label: '作者', get: (i) => i.authors, people: true },
     publisher: { label: '出版社', get: (i) => (i.publisher ? [i.publisher] : []), search: true },
+    dtags: { label: '豆瓣标签', get: (i) => i.dtags || [], limit: 20, search: true },
     rating: { label: '我的评分', get: (i) => (i.rating ? [`${i.rating} 星`] : []), sort: 'name' },
     duration: { label: '时长', get: (i) => durationBucket(i.durationMin), sort: 'name' },
   };
   const FACETS_BY_TAB = {
-    book: ['myTags', 'countries', 'decade', 'authors', 'publisher', 'rating'],
+    book: ['topics', 'myTags', 'countries', 'decade', 'authors', 'dtags', 'publisher', 'rating'],
     movie: ['myTags', 'genres', 'countries', 'languages', 'decade', 'cast', 'directors', 'duration', 'rating'],
-    all: ['myTags', 'genres', 'countries', 'decade', 'cast', 'directors', 'authors', 'rating'],
+    all: ['myTags', 'genres', 'topics', 'countries', 'decade', 'cast', 'directors', 'authors', 'rating'],
   };
-  const OPEN_BY_DEFAULT = new Set(['myTags', 'genres', 'countries', 'decade']);
+  const OPEN_BY_DEFAULT = new Set(['topics', 'myTags', 'genres', 'countries', 'decade']);
   const CHIP_LIMIT = 12;
   const PEOPLE_TOP = 10;
   const PAGE = 50;
@@ -48,7 +50,7 @@
   function saveUiState(persist, s) {
     if (!persist) return;
     try {
-      localStorage.setItem('dt_ui', JSON.stringify({ tab: s.tab, status: s.status, open: [...s.open] }));
+      localStorage.setItem('dt_ui', JSON.stringify({ tab: s.tab, status: s.status, open: [...s.open], seen: [...s.seen] }));
     } catch { /* 存不了就算了 */ }
   }
 
@@ -61,6 +63,7 @@
       query: '',
       sel: new Map(), // facetKey -> Set(values)
       open: new Set(saved.open || OPEN_BY_DEFAULT),
+      seen: new Set(saved.seen || []), // 已经出现过的分组（新加的分组第一次出现时默认展开）
       expanded: new Set(),
       facetQuery: {}, // 各分组里按回车提交的搜索词
       shown: PAGE,
@@ -154,7 +157,7 @@
     function rowHtml(i) {
       const sub = i.type === 'movie'
         ? [i.year, (i.countries || []).slice(0, 2).join(' '), (i.genres || []).slice(0, 3).join(' ')]
-        : [(i.authors || []).slice(0, 2).join('、'), i.publisher, i.year];
+        : [(i.authors || []).slice(0, 2).join('、'), i.year, (i.topics || []).slice(0, 2).join(' ')];
       const stars = i.rating ? `<span class="dt-stars">${'★'.repeat(i.rating)}</span>` : '';
       const initial = esc(String(i.title || '?').slice(0, 1));
       const cover = i.cover
@@ -169,6 +172,11 @@
             <a href="${esc(i.url)}" target="_blank" rel="noopener">打开豆瓣 ↗</a></div>
         </div>
       </div>`;
+    }
+
+    // 新版本加的分组，老用户第一次看到时默认展开
+    for (const fk of Object.keys(FACETS)) {
+      if (!st.seen.has(fk)) { if (saved.open && OPEN_BY_DEFAULT.has(fk)) st.open.add(fk); st.seen.add(fk); }
     }
 
     function render() {
