@@ -1,4 +1,4 @@
-// 书籍详情页：读取豆瓣成员常用标签和评价人数。
+// 详情页：读取豆瓣成员常用标签和评价人数（书籍；影视只读 AI 拿不准的那些）。
 // 常用标签不直接显示在页面上，藏在页面脚本的 criteria 变量里，形如 '7:推理|7:日本|3:/subject/xxx/'，7: 开头的是标签。
 
 export function parseDetailPage(html) {
@@ -9,6 +9,14 @@ export function parseDetailPage(html) {
     : [];
   const v = s.match(/property="v:votes"[^>]*>\s*(\d+)\s*</);
   return { tags, votes: v ? Number(v[1]) : 0 };
+}
+
+// 影视详情页：criteria 里混着演职员名字（不按热度排），按页面里的影人链接去掉
+export function parseMovieDetailPage(html) {
+  const s = String(html || '');
+  const r = parseDetailPage(s);
+  const names = new Set([...s.matchAll(/<a[^>]+href="[^"]*\/(?:celebrity|personage)\/\d+\/?"[^>]*>([^<]+)<\/a>/g)].map((m) => m[1].trim()));
+  return { ...r, tags: r.tags.filter((t) => !names.has(t)) };
 }
 
 const DELAY_MIN = 2000;
@@ -30,21 +38,23 @@ export function booksNeedingDetails(items, details) {
  * 逐本读取详情页，结果写进 details（{ key: { tags, votes, at } }），每读几本保存一次。
  * 遇到限流或网络问题就停下，下次打开面板接着读。
  */
-export async function fetchDetails({ items, details, save, onProgress = () => {}, shouldStop = () => false }) {
-  const todo = booksNeedingDetails(items, details);
+export async function fetchDetails({ items, details, save, onProgress = () => {}, shouldStop = () => false, todo = null }) {
+  todo = todo || booksNeedingDetails(items, details);
   for (let i = 0; i < todo.length; i++) {
     if (shouldStop()) break;
     const it = todo[i];
     onProgress({ done: i, total: todo.length });
-    const res = await fetch(`https://book.douban.com/subject/${it.id}/`, { credentials: 'include' });
+    const isMovie = it.type === 'movie';
+    const res = await fetch(`https://${isMovie ? 'movie' : 'book'}.douban.com/subject/${it.id}/`, { credentials: 'include' });
     if (/sec\.douban\.com|accounts\.douban\.com/.test(res.url) || [403, 418, 429].includes(res.status)) {
       await save(details);
-      throw new Error('豆瓣暂时限制了访问，书籍详情稍后再读');
+      throw new Error('豆瓣暂时限制了访问，详情页稍后再读');
     }
     if (res.status === 404) {
       details[it.key] = { tags: [], votes: 0, at: Date.now(), missing: true }; // 条目已下架
     } else if (res.ok) {
-      details[it.key] = { ...parseDetailPage(await res.text()), at: Date.now() };
+      const html = await res.text();
+      details[it.key] = { ...(isMovie ? parseMovieDetailPage(html) : parseDetailPage(html)), at: Date.now() };
     }
     if (i % 5 === 4 || i === todo.length - 1) await save(details);
     if (i < todo.length - 1) {

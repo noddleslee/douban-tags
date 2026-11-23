@@ -1,7 +1,7 @@
 // 影视：电影/电视剧区分、规则题材、AI 提示词与校验、同一部只问一次、显示时套用。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ruleForm, movieSeriesKey, genreTopics, movieSystemPrompt, movieUserPrompt, validateMovie,
+import { lowConfidenceMovies, movieTagsFor, ruleForm, movieSeriesKey, genreTopics, movieSystemPrompt, movieUserPrompt, validateMovie,
   movieGroupsToAsk, classifyMoviesWithLlm, moviesNeedingLlm, crossCheck, applyMovieTopics } from '../app/movie-topics.js';
 
 const fakeFetch = (replies) => {
@@ -78,5 +78,31 @@ test('显示时套用：AI 把握低用规则；电视剧识别；类型对不�
   assert.equal(items['movie:2'].form, '电视剧');
   assert.equal(items['movie:3'].form, '电视剧');
   assert.deepEqual(items['movie:3'].topics, items['movie:2'].topics); // 第一季不带季数，也和第二季合成一组
-  assert.deepEqual(crossCheck(['战争与历史', '社会议题'], ['剧情', '爱情']), ['战争与历史']);
+  assert.deepEqual(crossCheck(['科幻题材', '战争与历史'], ['剧情', '爱情']), ['科幻题材']); // 战争与历史不核
+});
+
+import { parseMovieDetailPage } from '../app/details.js';
+
+test('影视详情页：criteria 里的演职员名字去掉，只留标签', () => {
+  const html = `<div id="info"><a href="/celebrity/1023040/" rel="v:directedBy">陈凯歌</a>
+    <a href="/personage/27245046/" rel="v:starring">张国荣</a><span class='attrs'><a href="/celebrity/1/">雷汉</a></span></div>
+    <script>var criteria = '7:文革|7:张国荣|7:雷汉|7:剧情|7:同志|7:陈凯歌|7:历史|3:/subject/1291546/';</script>
+    <span property="v:votes">2467728</span>`;
+  assert.deepEqual(parseMovieDetailPage(html), { tags: ['文革', '剧情', '同志', '历史'], votes: 2467728 });
+});
+
+test('把握低的影视才去读详情页；读到标签后会重问，标签会发给 AI', () => {
+  const items = {
+    'movie:1': { key: 'movie:1', id: '1', type: 'movie', title: '米花之味', directors: ['鹏飞'] },
+    'movie:2': { key: 'movie:2', id: '2', type: 'movie', title: '霸王别姬', directors: ['陈凯歌'] },
+  };
+  const cache = { 'movie:1': { confidence: '低', topics: [] }, 'movie:2': { confidence: '高', topics: ['战争与历史'] } };
+  assert.deepEqual(lowConfidenceMovies(items, cache, {}).map((i) => i.key), ['movie:1']);
+  const details = { 'movie:1': { tags: ['米花之味', '留守儿童', '云南', '鹏飞', '剧情'] } };
+  assert.deepEqual(lowConfidenceMovies(items, cache, details), []);
+  assert.deepEqual(movieTagsFor(items['movie:1'], details), ['留守儿童', '云南', '剧情']);
+  const up = JSON.parse(movieUserPrompt([{ id: '1', title: '米花之味', tags: ['留守儿童'] }, { id: '2', title: '霸王别姬' }]));
+  assert.deepEqual(up[0].tags, ['留守儿童']);
+  assert.equal('tags' in up[1], false);
+  assert.ok(movieSystemPrompt().includes('阳光灿烂的日子'));
 });

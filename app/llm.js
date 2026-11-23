@@ -5,7 +5,7 @@
 import { TOPIC_RULES, OTHER_SUB } from './topic-rules.js';
 import { cleanTags, refTags, seriesKey } from './topics.js';
 
-export const PROMPT_VERSION = 2; // 改了提示词就加一，所有书会重新问一遍
+export const PROMPT_VERSION = 3; // 改了提示词就加一，所有书会重新问一遍
 
 export const LLM_DEFAULTS = { baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash' };
 export const BATCH = 10; // 每次请求问几本书
@@ -41,7 +41,8 @@ export function systemPrompt(tax = taxonomy()) {
     '4. 小说的二级定义：',
     '   - 历史小说：以古代或某段历史时期的真实人物、重大历史事件为主线。例：《两京十五日》《巨人的陨落》《静静的顿河》《敦煌》。',
     '   - 近现代小说：以近现代或当代社会为背景，写普通人的生活和命运。例：《活着》《平凡的世界》《许三观卖血记》《人生海海》。',
-    '   - 只是故事发生在过去年代，不算历史小说；历史小说和近现代小说一般只选一个。推理、科幻、奇幻等类型小说先选类型。',
+    '   - 只是故事发生在过去年代，不算历史小说；历史小说和近现代小说一般只选一个。',
+    '   - 推理、科幻、奇幻等类型小说先选类型；如果同时有明确的历史背景（如《长安十二时辰》《大唐狄公案》），历史小说也要选。',
     '   - 短篇集：只用于短篇小说合集（如《东京奇谭集》《受戒》），长篇小说不算。',
     '   - 漫画、图像小说、绘本：一定要选"漫画绘本"。',
     '5. tags 是豆瓣读者最常打的标签，按热度排序，可以参考，但可能有错，以你对这本书的了解为准；',

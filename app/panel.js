@@ -1,7 +1,7 @@
 // 侧边栏面板：第一次读取、后台自动同步、作者文化归属查询。
 import { loadItems, saveItems, loadMeta, saveMeta, clearAll, loadAuthors, saveAuthors, loadDetails, saveDetails, loadLlm, saveLlm, loadSettings, saveSettings } from './store.js';
 import { classifyWithLlm, booksNeedingLlm, tagsFor, LLM_DEFAULTS } from './llm.js';
-import { applyMovieTopics, classifyMoviesWithLlm, moviesNeedingLlm, crossCheck, genreTopics, ruleForm } from './movie-topics.js';
+import { applyMovieTopics, classifyMoviesWithLlm, moviesNeedingLlm, lowConfidenceMovies, movieTagsFor, crossCheck, genreTopics, ruleForm } from './movie-topics.js';
 import { fetchDetails } from './details.js';
 import { applyDetails, classify, cleanTags } from './topics.js';
 import { reparseItem } from './listpage.js';
@@ -159,7 +159,7 @@ async function aiPanelHtml() {
   const llmCache = await loadLlm();
   const left = booksNeedingLlm(items, llmCache, await loadDetails()).length;
   const movies = Object.values(items).filter((i) => i.type === 'movie').length;
-  const mLeft = moviesNeedingLlm(items, llmCache).length;
+  const mLeft = moviesNeedingLlm(items, llmCache, await loadDetails()).length;
   const status = !st.apiKey ? '未开启：现在书的题材由关键词规则判断。填入 API Key 后改由 AI 判断，更准。'
     : st.enabled === false ? '已关闭：现在用关键词规则判断题材。'
       : `已开启：书 ${books - left} / ${books} 本、影视 ${movies - mLeft} / ${movies} 部已由 AI 归类${aiBusy ? '（进行中）' : ''}。AI 拿不准的仍用规则。`;
@@ -218,7 +218,7 @@ async function runAi() {
     if (asked) await saveCompareFile(); // 这次有新归类的书：把对比表存到下载文件夹，方便核对
     // 影视：只发片名、导演、年份、国家、豆瓣类型
     const askedMovies = await classifyMoviesWithLlm({
-      items: await loadItems(), cache, settings, save: saveLlm,
+      items: await loadItems(), cache, details: await loadDetails(), settings, save: saveLlm,
       shouldStop: () => stopRequested,
       onProgress: ({ done, total }) => {
         aiText = total && done < total ? `AI 正在归类影视题材（${done} / ${total}）` : '';
@@ -295,14 +295,15 @@ async function movieCompareCsv() {
   applyMovieTopics(shown, aiOn(settings) ? llm : null);
   const fmt = (t, s) => [...(t || []), ...(s || []).filter((x) => !x.endsWith('/其他'))].join(' ');
   const q = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-  const rows = [['豆瓣ID', '片名', '导演', '年份', '国家', '豆瓣类型', '规则形式', 'AI形式', '规则题材', 'AI题材', 'AI把握', '面板显示', '来源', '待核']];
+  const details = await loadDetails();
+  const rows = [['豆瓣ID', '片名', '导演', '年份', '国家', '豆瓣类型', '发给AI的豆瓣标签', '规则形式', 'AI形式', '规则题材', 'AI题材', 'AI把握', '面板显示', '来源', '待核']];
   for (const it of Object.values(items)) {
     if (it.type !== 'movie') continue;
     const ai = llm[it.key];
     const rule = genreTopics(it.genres);
     const fin = shown[it.key];
     rows.push([it.id, it.titleFull || it.title, (it.directors || []).join('、'), it.year, (it.countries || []).join('、'),
-      (it.genres || []).join('、'), ruleForm(it) || '', ai ? (ai.form || '') : '', fmt(rule.topics, rule.subtopics),
+      (it.genres || []).join('、'), movieTagsFor(it, details).join(' '), ruleForm(it) || '', ai ? (ai.form || '') : '', fmt(rule.topics, rule.subtopics),
       ai ? fmt(ai.topics, ai.subtopics) : '（未归类）', ai ? ai.confidence : '', fmt(fin.topics, fin.subtopics),
       fin.topicSource === 'ai' ? 'AI' : '规则', ai ? crossCheck(ai.topics, it.genres).join(' ') : '']);
   }
@@ -342,6 +343,22 @@ async function lookupAuthors() {
 }
 
 // 补读书籍详情页
+// AI 把握"低"的影视：读它们的详情页拿豆瓣标签（之后 runAi 会带上标签重问）
+async function readLowMovieDetails() {
+  const settings = await loadSettings();
+  if (!aiOn(settings)) return 0;
+  const items = await loadItems();
+  const details = await loadDetails();
+  const todo = lowConfidenceMovies(items, await loadLlm(), details);
+  if (!todo.length) return 0;
+  await fetchDetails({
+    items, details, todo, save: saveDetails,
+    shouldStop: () => stopRequested,
+    onProgress: ({ done, total }) => { bgText = total ? `正在读取 AI 拿不准的影视的豆瓣标签（${done} / ${total}）` : ''; renderFoot(); },
+  });
+  return todo.length;
+}
+
 async function readDetails() {
   const details = await loadDetails();
   let n = 0;
@@ -383,6 +400,7 @@ async function background(steps, uid) {
     if (!stopRequested) await lookupAuthors();
     await aiTask;
     if (!stopRequested) await runAi(); // 这次新读到的书
+    if (!stopRequested && await readLowMovieDetails()) await runAi(); // 拿不准的影视带上豆瓣标签重问
   } catch (e) {
     lastError = e.message || String(e);
     console.error('[douban-tags]', e);
